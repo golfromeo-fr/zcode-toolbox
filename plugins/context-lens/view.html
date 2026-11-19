@@ -223,6 +223,24 @@
       .role-chip.on { border-color: var(--color-accent-primary, #0969da); color: var(--color-accent-primary, #0969da); }
       .role-chip.off { opacity: .4; text-decoration: line-through; }
       .msg.pinned { outline: 2px solid var(--color-accent-primary, #0969da); outline-offset: -1px; }
+      .pt-btn {
+        font: 10px ui-monospace, monospace;
+        padding: 0 5px;
+        border-radius: 4px;
+        border: 1px solid var(--color-border-primary, rgba(127,127,127,.25));
+        color: var(--color-text-secondary, #59636e);
+        cursor: pointer;
+        user-select: none;
+      }
+      .pt-btn:hover { color: var(--color-accent-primary, #0969da); border-color: var(--color-accent-primary, #0969da); }
+      .msg.pt-a { outline: 2px dashed #0969da; outline-offset: -1px; }
+      .msg.pt-b { outline: 2px dashed #bc4c00; outline-offset: -1px; }
+      #range-bar {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        font: 12px ui-monospace, monospace;
+      }
       .msg > .head { user-select: none; }
       #errors { color: #cf222e; font-size: 11px; white-space: pre-wrap; }
     </style>
@@ -237,7 +255,7 @@
     <div class="toolbar">
       <input id="search" placeholder="search…" />
       <button id="refresh">Refresh</button>
-      <button id="load-older">Load older</button>
+      <span id="range-bar" style="display:none"></span>
       <span id="msg-info"></span>
       <span id="gen-chips" style="display:flex;gap:6px;margin-left:auto"></span>
     </div>
@@ -304,7 +322,7 @@
           tools: "Tools",
           messages: "Messages",
           refresh: "Refresh",
-          loadOlder: "Load older",
+          rangeClear: "×",
           search: "search…",
           noLog: "No model-io log for this session — composition only (L1).",
           expandAll: "expand all",
@@ -323,7 +341,7 @@
           tools: "工具",
           messages: "消息",
           refresh: "刷新",
-          loadOlder: "加载更早",
+          rangeClear: "×",
           search: "搜索…",
           noLog: "该会话没有 model-io 日志 — 仅显示上下文组成（L1）。",
           expandAll: "全部展开",
@@ -348,6 +366,8 @@
       const roleSet = new Set(["system", "user", "assistant", "tool"]);
       let newestFirst = false;
       let pinnedGi = null;
+      let pointA = null;
+      let pointB = null;
       let toolsOffset = 0;
       let toolsSearch = "";
       let toolsExpanded = false;
@@ -488,11 +508,20 @@
               .join(" · ")
           : "";
         document.getElementById("role-counts").textContent = counts;
+        markRangeRows();
       }
       // One message -> DOM row: head (role, index, excerpt) + expandable body.
+      function markRangeRows() {
+        for (const row of document.querySelectorAll("#messages-list .msg")) {
+          row.classList.toggle("pt-a", row.dataset.gi !== "" && Number(row.dataset.gi) === pointA);
+          row.classList.toggle("pt-b", row.dataset.gi !== "" && Number(row.dataset.gi) === pointB);
+        }
+      }
       function renderMessage(m) {
         const row = document.createElement("div");
         row.className = "msg";
+        if (m._gi === pointA) row.classList.add("pt-a");
+        if (m._gi === pointB) row.classList.add("pt-b");
         row.dataset.role = m.role ?? "?";
         row.dataset.gi = String(m._gi ?? "");
         if (pinnedGi != null && m._gi === pinnedGi) row.classList.add("pinned");
@@ -512,10 +541,28 @@
         const idx = document.createElement("span");
         idx.className = "idx";
         idx.textContent = "#" + (m._gi ?? "?");
+        const ptA = document.createElement("span");
+        ptA.className = "pt-btn";
+        ptA.textContent = "A";
+        ptA.addEventListener("click", (e) => {
+          e.stopPropagation();
+          pointA = m._gi ?? null;
+          markRangeRows();
+          applyRangeIfReady();
+        });
+        const ptB = document.createElement("span");
+        ptB.className = "pt-btn";
+        ptB.textContent = "B";
+        ptB.addEventListener("click", (e) => {
+          e.stopPropagation();
+          pointB = m._gi ?? null;
+          markRangeRows();
+          applyRangeIfReady();
+        });
         const excerpt = document.createElement("span");
         excerpt.className = "excerpt";
         excerpt.textContent = messagePreview(m);
-        head.append(role, idx, excerpt);
+        head.append(role, idx, ptA, ptB, excerpt);
         const body = document.createElement("div");
         body.className = "body";
         const pre = document.createElement("pre");
@@ -595,6 +642,9 @@
         if (messagesEnd) params.endOffset = messagesEnd;
         if (currentSearch) params.search = currentSearch;
         params.roles = [...roleSet];
+        if (pointA != null && pointB != null) {
+          params.range = { from: Math.min(pointA, pointB), to: Math.max(pointA, pointB) };
+        }
         const result = await host.callTool("content", params);
         const data = result?.structuredContent ?? {};
         renderMessages(data);
@@ -761,10 +811,43 @@
           d.open = toolsExpanded;
         }
       });
-      document.getElementById("load-older").addEventListener("click", () => {
-        messagesEnd = Math.max(1, (messagesEnd ?? lastSnapshot?.log?.stitchedCount ?? messagesLimit) - messagesLimit);
-        void loadMessages();
-      });
+      // A/B range: 选中两点后自动应用；clear 恢复常规窗口。
+      function updateRangeBar() {
+        const bar = document.getElementById("range-bar");
+        if (pointA == null && pointB == null) {
+          bar.style.display = "none";
+          return;
+        }
+        bar.style.display = "inline-flex";
+        bar.replaceChildren();
+        const label = document.createElement("span");
+        label.textContent =
+          "A " + (pointA != null ? "#" + pointA : "—") + "  B " + (pointB != null ? "#" + pointB : "—");
+        bar.append(label);
+        if (pointA != null && pointB != null) {
+          const count = document.createElement("span");
+          count.textContent = String(Math.abs(pointB - pointA) + 1);
+          count.className = "role-counts";
+          bar.append(count);
+        }
+        const clear = document.createElement("button");
+        clear.textContent = "×";
+        clear.addEventListener("click", () => {
+          pointA = null;
+          pointB = null;
+          messagesEnd = null;
+          updateRangeBar();
+          void loadMessages();
+        });
+        bar.append(clear);
+      }
+      function applyRangeIfReady() {
+        updateRangeBar();
+        if (pointA != null && pointB != null) {
+          messagesEnd = null;
+          void loadMessages();
+        }
+      }
       // Sections fetch their content when first opened (lazy) and on refresh.
       for (const [secId, key] of [
         ["sec-composition", "composition"],
@@ -788,7 +871,6 @@
         document.getElementById("search").placeholder = t.search;
         document.getElementById("tools-search").placeholder = t.filter;
         document.getElementById("refresh").textContent = t.refresh;
-        document.getElementById("load-older").textContent = t.loadOlder;
       }
       // ---- bootstrap (fixture pattern) ----
       let stateUri = null;

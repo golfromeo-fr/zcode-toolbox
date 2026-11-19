@@ -296,8 +296,48 @@ export async function activate(ctx) {
             const wanted = input.roles.filter((r) => typeof r === "string");
             base = wanted.length ? base.filter((m) => wanted.includes(m.role)) : [];
           }
+          // Range A–B（全局下标，含两端）：优先于角色/搜索过滤，范围内不套 30 条窗口——
+          // 用户明确选了两点，就返回整段（上限 400 条，超限取靠近 B 的尾部并标 truncated）。
+          const range = input?.range;
           let source = base;
           let matchedCount;
+          if (
+            range &&
+            typeof range.from === "number" &&
+            typeof range.to === "number" &&
+            Number.isFinite(range.from) &&
+            Number.isFinite(range.to)
+          ) {
+            const lo = Math.max(0, Math.floor(Math.min(range.from, range.to)));
+            const hi = Math.min(all.length - 1, Math.floor(Math.max(range.from, range.to)));
+            base = all.slice(lo, hi + 1);
+            source = base;
+            if (search) {
+              const filtered = base.filter((m) => messageText(m).toLowerCase().includes(search));
+              matchedCount = filtered.length;
+              source = filtered;
+            }
+            if (source.length > 400) {
+              source = source.slice(-400);
+            }
+            return {
+              what: "messages",
+              sessionId: resolved.sessionId,
+              total: all.length,
+              matched: matchedCount,
+              roleCounts: Object.fromEntries(
+                Object.entries(
+                  all.reduce((acc, m) => {
+                    acc[m.role ?? "?"] = (acc[m.role ?? "?"] ?? 0) + 1;
+                    return acc;
+                  }, {}),
+                ),
+              ),
+              range: { from: lo, to: hi },
+              end: hi + 1,
+              messages: source.map(capMessage),
+            };
+          }
           if (search) {
             const filtered = base.filter((m) => messageText(m).toLowerCase().includes(search));
             matchedCount = filtered.length;

@@ -277,7 +277,6 @@ export async function activate(ctx) {
           // messages: windowed from the end; role/search filters run across ALL messages
           const all = stitched.messages;
           const limit = clampInt(input?.limit, 1, 100, 30);
-          let end = clampInt(input?.endOffset, 1, all.length, all.length);
           // 多选角色：roles 数组给出要显示的角色集合；空数组 = 全部隐藏（用户可清空聚焦）。
           let base = all;
           if (Array.isArray(input?.roles)) {
@@ -291,6 +290,9 @@ export async function activate(ctx) {
             matchedCount = filtered.length;
             source = filtered;
           }
+          // 窗口必须按过滤后的列表计算：endOffset 是 source 的下标，不能拿未过滤的
+          // all.length 当窗口终点（否则一过滤就切片越界，显示为空）。
+          let end = clampInt(input?.endOffset, 1, Math.max(1, source.length), source.length);
           const roleCounts = {};
           for (const m of all) {
             roleCounts[m.role ?? "?"] = (roleCounts[m.role ?? "?"] ?? 0) + 1;

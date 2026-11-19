@@ -1,0 +1,18 @@
+{
+  "name": "golfromeo-zcode-toolbox",
+  "description": "Personal ZCode plugin collection: per-plugin install and activate/deactivate via the Plugins page on any instance.",
+  "metadata": {
+    "pluginRoot": "plugins"
+  },
+  "pluginRoot": "plugins",
+  "plugins": [
+    {
+      "name": "context-lens",
+      "source": "./context-lens",
+      "version": "1.2.1",
+      "description": "Live viewer for the LLM context window: composer chip (tok/s, usage %, output tokens, last rate in parentheses) + side-pane view with the full system prompt, all tool schemas and message bodies, stitched from the model-io log.",
+      "category": "developer-tools",
+      "tags": ["context", "tokens", "observability", "model-io"]
+    }
+  ]
+}

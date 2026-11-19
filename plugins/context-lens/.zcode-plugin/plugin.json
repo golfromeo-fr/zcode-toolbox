@@ -1,0 +1,53 @@
+{
+  "name": "context-lens",
+  "version": "1.2.1",
+  "description": "Live viewer for the LLM context window: composition, system prompt, tool schemas and message bodies, read from the model-io diagnostic log.",
+  "extension": {
+    "engines": {
+      "zcode": "^1.0.0"
+    },
+    "main": "./loader.js",
+    "activationEvents": [
+      "onAvailable"
+    ],
+    "contributes": {
+      "commands": [
+        {
+          "id": "open",
+          "title": {
+            "zh-CN": "查看上下文内容",
+            "en-US": "Open context lens"
+          }
+        }
+      ],
+      "views": [
+        {
+          "id": "context",
+          "title": {
+            "zh-CN": "上下文透视",
+            "en-US": "Context lens"
+          },
+          "icon": "eye"
+        }
+      ]
+    }
+  },
+  "slots": {
+    "sidePane.launcher": [
+      {
+        "id": "open-view",
+        "target": {
+          "view": "context"
+        }
+      }
+    ],
+    "composer.status": [
+      {
+        "id": "status",
+        "target": {
+          "command": "open"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,670 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Context lens</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 12px;
+        font: 13px/1.5 system-ui, sans-serif;
+        color: var(--color-text-primary, #1f2328);
+        background: var(--color-background-primary, transparent);
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      header select {
+        max-width: 260px;
+        font: inherit;
+      }
+      #meta {
+        color: var(--color-text-secondary, #59636e);
+        font-size: 12px;
+        flex: 1;
+        min-width: 200px;
+      }
+      #usagebar {
+        height: 6px;
+        border-radius: 3px;
+        background: var(--color-border-primary, rgba(127,127,127,.25));
+        overflow: hidden;
+        margin: 6px 0 10px;
+      }
+      #usagebar > div {
+        height: 100%;
+        background: var(--color-accent-primary, #0969da);
+        width: 0;
+        transition: width .3s;
+      }
+      #banner {
+        padding: 6px 10px;
+        border-radius: 6px;
+        margin-bottom: 10px;
+        font-size: 12px;
+        background: var(--color-background-secondary, rgba(127,127,127,.12));
+        display: none;
+      }
+      details.section {
+        border: 1px solid var(--color-border-primary, rgba(127,127,127,.25));
+        border-radius: 8px;
+        margin-bottom: 8px;
+        background: var(--color-background-primary, transparent);
+      }
+      details.section > summary {
+        padding: 8px 10px;
+        cursor: pointer;
+        font-weight: 600;
+        user-select: none;
+        list-style: none;
+      }
+      details.section > summary::before {
+        content: "▸ ";
+        font-size: 11px;
+        color: var(--color-text-secondary, #59636e);
+      }
+      details.section[open] > summary::before { content: "▾ "; }
+      .section-body { padding: 0 10px 10px; }
+      .bar-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 4px 0;
+        font-size: 12px;
+      }
+      .bar-row .label { width: 130px; flex-shrink: 0; }
+      .bar-row .track {
+        flex: 1;
+        height: 8px;
+        border-radius: 4px;
+        background: var(--color-border-primary, rgba(127,127,127,.25));
+        overflow: hidden;
+      }
+      .bar-row .fill {
+        height: 100%;
+        background: var(--color-accent-primary, #0969da);
+      }
+      .bar-row .pct { width: 48px; text-align: right; }
+      pre.block {
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 6px 0;
+        padding: 8px;
+        border-radius: 6px;
+        background: var(--color-background-secondary, rgba(127,127,127,.12));
+        font: 11px/1.45 ui-monospace, monospace;
+        max-height: 320px;
+        overflow: auto;
+      }
+      .msg {
+        border: 1px solid var(--color-border-primary, rgba(127,127,127,.25));
+        border-radius: 6px;
+        margin: 6px 0;
+        overflow: hidden;
+      }
+      .msg > .head {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 4px 8px;
+        font-size: 11px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .msg > .head .role {
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 10px;
+        letter-spacing: .4px;
+      }
+      .msg[data-role=system] > .head .role { color: #8250df; }
+      .msg[data-role=user] > .head .role { color: #0969da; }
+      .msg[data-role=assistant] > .head .role { color: #1a7f37; }
+      .msg[data-role=tool] > .head .role { color: #9a6700; }
+      .msg > .head .idx { color: var(--color-text-secondary, #59636e); }
+      .msg > .head .excerpt {
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--color-text-secondary, #59636e);
+      }
+      .msg > .body {
+        display: none;
+        border-top: 1px solid var(--color-border-primary, rgba(127,127,127,.25));
+      }
+      .msg.open > .body { display: block; }
+      .msg > .body pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+        padding: 8px;
+        font: 11px/1.45 ui-monospace, monospace;
+        max-height: 280px;
+        overflow: auto;
+      }
+      .tool-item { border-bottom: 1px solid var(--color-border-primary, rgba(127,127,127,.25)); }
+      .tool-item > summary {
+        padding: 4px 6px;
+        cursor: pointer;
+        font: 12px ui-monospace, monospace;
+      }
+      .tool-item > div {
+        padding: 0 6px 6px;
+      }
+      #search {
+        font: inherit;
+        padding: 4px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--color-border-primary, rgba(127,127,127,.25));
+        background: var(--color-background-primary, transparent);
+        color: var(--color-text-primary, inherit);
+        width: 180px;
+      }
+      button {
+        font: inherit;
+        padding: 3px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--color-border-primary, rgba(127,127,127,.25));
+        background: var(--color-background-secondary, transparent);
+        color: var(--color-text-primary, inherit);
+        cursor: pointer;
+      }
+      .toolbar {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .gen-chip {
+        font: 11px ui-monospace, monospace;
+        padding: 1px 7px;
+        border-radius: 999px;
+        background: var(--color-background-secondary, rgba(127,127,127,.12));
+        white-space: nowrap;
+      }
+      .gen-chip.warn { color: #9a6700; }
+      .gen-chip.alert { color: #cf222e; }
+      #usagebar > div.warn { background: #9a6700; }
+      #usagebar > div.alert { background: #cf222e; }
+      #errors { color: #cf222e; font-size: 11px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <select id="session-picker"></select>
+      <div id="meta">loading…</div>
+    </header>
+    <div id="usagebar"><div></div></div>
+    <div id="banner"></div>
+    <div class="toolbar">
+      <input id="search" placeholder="search…" />
+      <button id="refresh">Refresh</button>
+      <button id="load-older">Load older</button>
+      <span id="msg-info"></span>
+      <span id="gen-chips" style="display:flex;gap:6px;margin-left:auto"></span>
+    </div>
+    <details class="section" id="sec-composition">
+      <summary data-i18n="composition"></summary>
+      <div class="section-body">
+        <ul id="composition" style="list-style:none;margin:0;padding:0"></ul>
+        <div id="comp-empty" style="display:none;color:var(--color-text-secondary,#59636e)">—</div>
+      </div>
+    </details>
+    <details class="section" id="sec-system">
+      <summary data-i18n="system"></summary>
+      <div class="section-body">
+        <div id="system-blocks"></div>
+      </div>
+    </details>
+    <details class="section" id="sec-tools">
+      <summary data-i18n="tools"></summary>
+      <div class="section-body">
+        <div id="tools-list"></div>
+        <div id="tools-info" style="color:var(--color-text-secondary,#59636e)"></div>
+      </div>
+    </details>
+    <details class="section" id="sec-messages">
+      <summary data-i18n="messages"></summary>
+      <div class="section-body">
+        <div id="messages-list"></div>
+      </div>
+    </details>
+    <div id="errors"></div>
+    <script>
+      // Errors go to DOM so failures are visible without devtools.
+      const errors = [];
+      window.addEventListener("error", (e) => showErrors());
+      window.addEventListener("unhandledrejection", (e) => {
+        errors.push(String(e.reason?.message ?? e.reason));
+        showErrors();
+      });
+      function showErrors() {
+        document.getElementById("errors").textContent = errors.join("\n");
+      }
+      const host = window.zcode;
+      const I18N = {
+        en: {
+          composition: "Composition",
+          system: "System prompt",
+          tools: "Tools",
+          messages: "Messages",
+          refresh: "Refresh",
+          loadOlder: "Load older",
+          search: "search…",
+          noLog: "No model-io log for this session — composition only (L1).",
+          staleLog: "Log stitching incomplete (truncated) — showing the last window.",
+          loading: "loading…",
+          noSession: "No visible session.",
+          openSection: "Sections load on open — click a section to load its content.",
+          ofTotal: (a, b) => `showing ${a} of ${b}`,
+          matched: (n) => `${n} matches`,
+        },
+        zh: {
+          composition: "上下文组成",
+          system: "系统提示词",
+          tools: "工具",
+          messages: "消息",
+          refresh: "刷新",
+          loadOlder: "加载更早",
+          search: "搜索…",
+          noLog: "该会话没有 model-io 日志 — 仅显示上下文组成（L1）。",
+          staleLog: "日志拼接不完整（truncated）— 显示最近窗口。",
+          loading: "加载中…",
+          noSession: "当前没有可见会话。",
+          openSection: "点击分区标题加载内容。",
+          ofTotal: (f) => `显示 ${f}`,
+          matched: (n) => `${n} 个匹配`,
+        },
+      };
+      const locale = (host.locale ?? "en").toLowerCase().startsWith("zh") ? "zh" : "en";
+      const t = I18N[locale];
+      // Track open sections so refresh only refetches what is visible.
+      const openState = { system: false, tools: false, messages: false };
+      let pinnedSession = null;
+      let lastSnapshot = null;
+      let messagesEnd = null; // exclusive end index for the messages window
+      let messagesLimit = 30;
+      // ---- render helpers ----
+      function esc(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+      function fmtTokens(n) {
+        if (!Number.isFinite(n)) return "—";
+        if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+        return String(n);
+      }
+      function renderComposition(comp) {
+        const list = document.getElementById("composition");
+        const empty = document.getElementById("comp-empty");
+        const cats = comp?.categories ?? [];
+        if (!cats.length) {
+          list.replaceChildren();
+          empty.style.display = "block";
+          empty.textContent = comp ? "no categories" : t.noSession;
+          return;
+        }
+        empty.style.display = "none";
+        const total = Math.max(1, comp.estimatedTokens ?? comp.providerContextTokens ?? 1);
+        const frag = document.createDocumentFragment();
+        for (const c of cats) {
+          const row = document.createElement("div");
+          row.className = "bar-row";
+          const label = document.createElement("span");
+          label.className = "label";
+          label.textContent = c.id;
+          const track = document.createElement("span");
+          track.className = "track";
+          const fill = document.createElement("span");
+          fill.className = "fill";
+          fill.style.width = `${Math.min(100, (c.tokens / total) * 100).toFixed(1)}%`;
+          const pct = document.createElement("span");
+          pct.className = "pct";
+          pct.textContent = fmtTokens(c.tokens);
+          track.append(fill);
+          row.append(label, track, pct);
+          frag.append(row);
+        }
+        list.replaceChildren(frag);
+      }
+      function renderSystem(blocks) {
+        const el = document.getElementById("system-blocks");
+        if (!blocks?.length) {
+          el.innerHTML = '<div style="color:var(--color-text-secondary,#59636e)">—</div>';
+          return;
+        }
+        el.replaceChildren(
+          ...blocks.map((b) => {
+            const pre = document.createElement("pre");
+            pre.className = "block";
+            pre.textContent = b.text;
+            const wrap = document.createElement("div");
+            wrap.append(pre);
+            if (b.truncated) {
+              const note = document.createElement("div");
+              note.textContent = "…[truncated]";
+              note.style.color = "#9a6700";
+              wrap.append(note);
+              return wrap;
+            }
+            return wrap;
+          }),
+        );
+      }
+      function renderTools(data) {
+        const el = document.getElementById("tools-list");
+        const info = document.getElementById("tools-info");
+        if (!data?.tools?.length) {
+          el.textContent = data ? "no tools recorded" : "—";
+          info.textContent = "";
+          return;
+        }
+        info.textContent = `${data.offset + 1}-${data.offset + data.tools.length} of ${data.total}`;
+        const frag = document.createDocumentFragment();
+        for (const tool of data.tools) {
+          const d = document.createElement("details");
+          d.className = "tool-item";
+          const sum = document.createElement("summary");
+          sum.textContent = tool.name;
+          const code = document.createElement("pre");
+          code.className = "block";
+          code.textContent = tool.schema.text;
+          d.append(sum, code);
+          frag.append(d);
+        }
+        el.replaceChildren(frag);
+      }
+      function renderMessages(data) {
+        const el = document.getElementById("messages-list");
+        const info = document.getElementById("msg-info");
+        if (!data?.messages?.length) {
+          el.textContent = data ? "no messages" : "—";
+          info.textContent = "";
+          return;
+        }
+        const from = data.end - data.messages.length + 1;
+        let label = from + "-" + data.end + " / " + data.total;
+        if (data.matched != null) label = label + " (" + t.matched(data.matched) + ")";
+        info.textContent = label;
+        const frag = document.createDocumentFragment();
+        for (const m of data.messages) {
+          frag.append(renderMessage(m));
+        }
+        el.replaceChildren(frag);
+      }
+      // One message -> DOM row: head (role, index, excerpt) + expandable body.
+      function renderMessage(m) {
+        const row = document.createElement("div");
+        row.className = "msg";
+        row.dataset.role = m.role ?? "?";
+        const head = document.createElement("div");
+        head.className = "head";
+        const role = document.createElement("span");
+        role.className = "role";
+        role.textContent = m.role ?? "?";
+        const idx = document.createElement("span");
+        idx.className = "idx";
+        idx.textContent = "#" + (m._i ?? "?");
+        const excerpt = document.createElement("span");
+        excerpt.className = "excerpt";
+        excerpt.textContent = messagePreview(m);
+        head.append(role, idx, excerpt);
+        const body = document.createElement("div");
+        body.className = "body";
+        const pre = document.createElement("pre");
+        pre.textContent = messageBodyText(m);
+        body.append(pre);
+        row.append(head, body);
+        head.addEventListener("click", () => row.classList.toggle("open"));
+        return row;
+      }
+      // Flatten a message for the excerpt / body rendering.
+      function messageBodyText(m) {
+        const c = m?.content;
+        if (typeof c === "string") return c;
+        if (!Array.isArray(c)) return "";
+        const out = [];
+        for (const p of c) {
+          if (typeof p === "string") { out.push(p); continue; }
+          if (p?.type === "text" || p?.type === "thinking") {
+            out.push("[" + p.type + "] " + (p.text ?? p.thinking ?? ""));
+          } else if (p?.type === "tool_use") {
+            out.push("[tool_use] " + (p.name ?? "") + " " + JSON.stringify(p.input ?? {}));
+          } else if (p?.type === "tool_result") {
+            out.push("[tool_result id=" + (p.tool_use_id ?? "") + "]");
+            const rc = p.content;
+            if (typeof rc === "string") out.push(rc);
+            else if (Array.isArray(rc)) {
+              for (const rp of rc) {
+                if (rp?.type === "text") out.push(rp.text ?? "");
+                else out.push(JSON.stringify(rp));
+              }
+            }
+          } else {
+            out.push(JSON.stringify(p));
+          }
+        }
+        return out.join("\n\n");
+      }
+      function messagePreview(m) {
+        const s = messageBodyText(m).replace(/\s+/g, " ").trim();
+        return s.length > 120 ? s.slice(0, 120) + "…" : s;
+      }
+      // ---- refresh loop ----
+      async function refreshSnapshot() {
+        const params = {};
+        if (pinnedSession) params.sessionId = pinnedSession;
+        const result = await host.callTool("snapshot", params);
+        const data = result?.structuredContent ?? result ?? {};
+        lastSnapshot = data;
+        renderHeader(data);
+        renderComposition(data.composition);
+        renderSessionPicker(data);
+        if (openState.system) void loadSystem();
+        if (openState.tools) void loadTools();
+        if (openState.messages) void loadMessages();
+      }
+      async function loadSystem() {
+        const params = { what: "system" };
+        if (pinnedSession) params.sessionId = pinnedSession;
+        const result = await host.callTool("content", params);
+        const data = result?.structuredContent ?? {};
+        renderSystem(data.blocks ?? []);
+      }
+      async function loadTools() {
+        const params = { what: "tools" };
+        if (pinnedSession) params.sessionId = pinnedSession;
+        const result = await host.callTool("content", params);
+        const data = result?.structuredContent ?? {};
+        renderTools(data);
+      }
+      async function loadMessages() {
+        const params = { what: "messages", limit: messagesLimit };
+        if (pinnedSession) params.sessionId = pinnedSession;
+        if (messagesEnd) params.endOffset = messagesEnd;
+        if (currentSearch) params.search = currentSearch;
+        const result = await host.callTool("content", params);
+        const data = result?.structuredContent ?? {};
+        renderMessages(data);
+        messagesEnd = data.end;
+      }
+      let currentSearch = "";
+      function renderHeader(data) {
+        const meta = document.getElementById("meta");
+        const bar = document.getElementById("usagebar");
+        const comp = data.composition;
+        const log = data.log;
+        const gen = data.gen;
+        let text = "";
+        if (data.version) text += "v" + data.version + " · ";
+        if (comp?.model?.modelId) text += comp.model.modelId;
+        // 只显示 provider usage；字符估算偏高约 2×，宁缺毋错。
+        const used = comp?.providerContextTokens ?? null;
+        if (used != null) {
+          text += " · " + fmtTokens(used);
+          if (comp.model?.contextWindow) {
+            text += " / " + fmtTokens(comp.model.contextWindow) + " tok";
+          }
+        }
+        if (log?.available) {
+          text += " · log ok (" + log.stitchedCount + " msgs";
+          if (!log.complete) text += ", incomplete";
+          text += ")";
+        } else {
+          text += " · L1 only";
+        }
+        meta.textContent = text || t.loading;
+        let pct = 0;
+        if (used != null && comp.model?.contextWindow) {
+          pct = Math.min(100, (used / comp.model.contextWindow) * 100);
+        }
+        bar.firstElementChild.style.width = pct + "%";
+        const fill = bar.firstElementChild;
+        fill.className = pct >= 85 ? "alert" : pct >= 70 ? "warn" : "";
+        renderGenChips(gen, pct);
+        const banner = document.getElementById("banner");
+        if (log && log.available === false) {
+          banner.textContent = t.noLog;
+          banner.style.display = "block";
+        } else if (log?.truncated) {
+          banner.textContent = t.staleLog;
+          banner.style.display = "block";
+        } else {
+          banner.style.display = "none";
+        }
+      }
+      function renderGenChips(gen, pct) {
+        const el = document.getElementById("gen-chips");
+        const chips = [];
+        if (gen?.lastTokS) {
+          chips.push({ label: gen.lastTokS.toFixed(1) + " tok/s" + (gen.streaming ? "" : " (last)") });
+        }
+        if (gen?.inTotal) chips.push({ label: fmtTokens(gen.inTotal) + " in" });
+        if (gen?.outTotal) chips.push({ label: fmtTokens(gen.outTotal) + " out" });
+        if (gen?.lastCachePct != null) {
+          chips.push({ label: "cache " + Math.round(gen.lastCachePct) + "%" });
+        }
+        if (gen?.rounds) chips.push({ label: gen.rounds + " calls" });
+        if (gen?.query?.out) {
+          chips.push({
+            label: "turn ↓" + fmtTokens(gen.query.out) + " ↑" + fmtTokens(gen.query.in),
+            cls: null,
+          });
+        }
+        if (gen?.lastTtft) chips.push({ label: Math.round(gen.lastTtft) + "ms ttft" });
+        if (pct != null && pct >= 70) {
+          chips.push({ label: "⚠ " + pct + "%", cls: pct >= 85 ? "alert" : "warn" });
+        }
+        el.replaceChildren(
+          ...chips.map((c) => {
+            const span = document.createElement("span");
+            span.className = "gen-chip" + (c.cls ? " " + c.cls : "");
+            span.textContent = c.label;
+            return span;
+          }),
+        );
+      }
+      function renderSessionPicker(data) {
+        const sel = document.getElementById("session-picker");
+        const sessions = data.sessions ?? [];
+        const frag = document.createDocumentFragment();
+        const auto = document.createElement("option");
+        auto.value = "";
+        auto.textContent = data.resolution === "focused" ? "● focused" : "auto";
+        frag.append(auto);
+        for (const s of sessions) {
+          const o = document.createElement("option");
+          o.value = s.sessionId;
+          const idTail = s.sessionId.slice(-8);
+          o.textContent = (s.focused ? "● " : "") + idTail + (s.isDraft ? " (draft)" : "");
+          if (pinnedSession === s.sessionId) o.selected = true;
+          frag.append(o);
+        }
+        sel.replaceChildren(frag);
+      }
+      // ---- wiring ----
+      const sel = document.getElementById("session-picker");
+      sel.addEventListener("change", () => {
+        pinnedSession = sel.value || null;
+        messagesEnd = null;
+        void refreshSnapshot();
+      });
+      const searchEl = document.getElementById("search");
+      let searchTimer = null;
+      searchEl.addEventListener("input", () => {
+        currentSearch = searchEl.value.trim();
+        if (!currentSearch) messagesEnd = null;
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+          void refreshSnapshot();
+        }, 350);
+      });
+      document.getElementById("refresh").addEventListener("click", () => {
+        messagesEnd = null;
+        void refreshSnapshot();
+      });
+      document.getElementById("load-older").addEventListener("click", () => {
+        messagesEnd = Math.max(1, (messagesEnd ?? lastSnapshot?.log?.stitchedCount ?? messagesLimit) - messagesLimit);
+        void loadMessages();
+      });
+      // Sections fetch their content when first opened (lazy) and on refresh.
+      for (const [secId, key] of [
+        ["sec-composition", "composition"],
+        ["sec-system", "system"],
+        ["sec-tools", "tools"],
+        ["sec-messages", "messages"],
+      ]) {
+        const sec = document.getElementById(secId);
+        sec.addEventListener("toggle", () => {
+          openState[key] = sec.open;
+          if (sec.open && key === "system") void loadSystem();
+          if (sec.open && key === "tools") void loadTools();
+          if (sec.open && key === "messages") void loadMessages();
+        });
+      }
+      function applyI18n() {
+        for (const el of document.querySelectorAll("[data-i18n]")) {
+          const v = t[el.dataset.i18n];
+          if (typeof v === "string") el.textContent = v;
+        }
+        document.getElementById("search").placeholder = t.search;
+        document.getElementById("refresh").textContent = t.refresh;
+        document.getElementById("load-older").textContent = t.loadOlder;
+      }
+      // ---- bootstrap (fixture pattern) ----
+      let stateUri = null;
+      host.subscribe(applyHostStyles);
+      host.onResourceUpdated((uri) => {
+        if (uri === stateUri) void refreshSnapshot();
+      });
+      host.ready().then(async () => {
+        applyHostStyles();
+        applyI18n();
+        const resources = await host.listResources();
+        stateUri =
+          resources.resources.find((resource) => resource.uri.endsWith("/state"))?.uri ?? null;
+        if (stateUri) await host.subscribeResource(stateUri);
+        await refreshSnapshot();
+      });
+      // Host styles/theme/locale bridge (fixture pattern).
+      function applyHostStyles() {
+        const variables = host.hostContext?.styles?.variables ?? {};
+        for (const [name, value] of Object.entries(variables)) {
+          if (typeof value === "string") {
+            document.documentElement.style.setProperty(name, value);
+          }
+        }
+        document.documentElement.dataset.theme = host.theme ?? "";
+      }
+    </script>
+  </body>
+</html>

@@ -311,6 +311,11 @@ export async function activate(ctx) {
             const lo = Math.max(0, Math.floor(Math.min(range.from, range.to)));
             const hi = Math.min(all.length - 1, Math.floor(Math.max(range.from, range.to)));
             base = all.slice(lo, hi + 1);
+            // 角色过滤在范围内同样生效（否则选了 range 后 chips 看起来失效）。
+            if (Array.isArray(input?.roles)) {
+              const wanted = input.roles.filter((r) => typeof r === "string");
+              base = wanted.length ? base.filter((m) => wanted.includes(m.role)) : [];
+            }
             source = base;
             if (search) {
               const filtered = base.filter((m) => messageText(m).toLowerCase().includes(search));
@@ -335,6 +340,7 @@ export async function activate(ctx) {
               ),
               range: { from: lo, to: hi },
               end: hi + 1,
+              sourceTotal: source.length,
               messages: source.map(capMessage),
             };
           }
@@ -369,6 +375,7 @@ export async function activate(ctx) {
             matched: matchedCount,
             roleCounts,
             end: end,
+            sourceTotal: source.length,
             messages: source.slice(Math.max(0, end - limit), end).map(capMessage),
           };
         },

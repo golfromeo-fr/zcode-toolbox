@@ -405,6 +405,7 @@
       let pinnedSession = null;
       let lastSnapshot = null;
       let messagesEnd = null; // exclusive end index for the messages window
+      let lastSourceTotal = null; // 过滤后列表长度：判断窗口是否停在尾部（跟随 live）
       let messagesLimit = 30;
       const roleSet = new Set(["system", "user", "assistant", "tool"]);
       let newestFirst = false;
@@ -690,7 +691,11 @@
       async function loadMessages(overrides = {}) {
         const params = { what: "messages", limit: messagesLimit, ...overrides };
         if (pinnedSession) params.sessionId = pinnedSession;
-        if (messagesEnd) params.endOffset = messagesEnd;
+        // 跟随尾部：窗口原本停在过滤后列表的末尾时，刷新不传 endOffset，让新消息继续进来；
+        // 只有用户明确跳到历史中间（scrubber/range）才固定 endOffset，Refresh/清除 range 恢复跟随。
+        const atTail =
+          messagesEnd != null && lastSourceTotal != null && messagesEnd >= lastSourceTotal;
+        if (messagesEnd && !atTail) params.endOffset = messagesEnd;
         if (currentSearch) params.search = currentSearch;
         params.roles = [...roleSet];
         if (pointA != null && pointB != null) {
@@ -699,6 +704,7 @@
         const result = await host.callTool("content", params);
         const data = result?.structuredContent ?? {};
         renderMessages(data);
+        lastSourceTotal = data.sourceTotal ?? null;
         messagesEnd = data.end;
       }
       let currentSearch = "";

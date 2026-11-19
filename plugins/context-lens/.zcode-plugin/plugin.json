@@ -1,6 +1,6 @@
 {
   "name": "context-lens",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "Live viewer for the LLM context window: composition, system prompt, tool schemas and message bodies, read from the model-io diagnostic log.",
   "extension": {
     "engines": {

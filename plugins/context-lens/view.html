@@ -193,6 +193,23 @@
       .gen-chip.alert { color: #cf222e; }
       #usagebar > div.warn { background: #9a6700; }
       #usagebar > div.alert { background: #cf222e; }
+      .msg-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 8px;
+        font-size: 12px;
+      }
+      .msg-controls select {
+        font: inherit;
+        padding: 2px 6px;
+        border-radius: 6px;
+        border: 1px solid var(--color-border-primary, rgba(127,127,127,.25));
+        background: var(--color-background-primary, transparent);
+        color: var(--color-text-primary, inherit);
+      }
+      .expand-toggle { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+      .role-counts { color: var(--color-text-secondary, #59636e); font-size: 11px; }
       #errors { color: #cf222e; font-size: 11px; white-space: pre-wrap; }
     </style>
   </head>
@@ -233,6 +250,17 @@
     <details class="section" id="sec-messages">
       <summary data-i18n="messages"></summary>
       <div class="section-body">
+        <div class="msg-controls">
+          <select id="role-filter">
+            <option value="all" data-i18n="roleAll"></option>
+            <option value="system">system</option>
+            <option value="user">user</option>
+            <option value="assistant">assistant</option>
+            <option value="tool">tool</option>
+          </select>
+          <label class="expand-toggle"><input type="checkbox" id="expand-all" /><span data-i18n="expandAll"></span></label>
+          <span id="role-counts" class="role-counts"></span>
+        </div>
         <div id="messages-list"></div>
       </div>
     </details>
@@ -259,6 +287,8 @@
           loadOlder: "Load older",
           search: "search…",
           noLog: "No model-io log for this session — composition only (L1).",
+          expandAll: "expand all",
+          roleAll: "all roles",
           staleLog: "Log stitching incomplete (truncated) — showing the last window.",
           loading: "loading…",
           noSession: "No visible session.",
@@ -275,6 +305,8 @@
           loadOlder: "加载更早",
           search: "搜索…",
           noLog: "该会话没有 model-io 日志 — 仅显示上下文组成（L1）。",
+          expandAll: "全部展开",
+          roleAll: "全部角色",
           staleLog: "日志拼接不完整（truncated）— 显示最近窗口。",
           loading: "加载中…",
           noSession: "当前没有可见会话。",
@@ -291,6 +323,8 @@
       let lastSnapshot = null;
       let messagesEnd = null; // exclusive end index for the messages window
       let messagesLimit = 30;
+      let roleFilter = "all";
+      let messagesExpanded = false;
       // ---- render helpers ----
       function esc(s) {
         return String(s)
@@ -397,9 +431,17 @@
         info.textContent = label;
         const frag = document.createDocumentFragment();
         for (const m of data.messages) {
-          frag.append(renderMessage(m));
+          const row = renderMessage(m);
+          if (messagesExpanded) row.classList.add("open");
+          frag.append(row);
         }
         el.replaceChildren(frag);
+        const counts = data.roleCounts
+          ? Object.entries(data.roleCounts)
+              .map(([k, v]) => k + "×" + v)
+              .join(" · ")
+          : "";
+        document.getElementById("role-counts").textContent = counts;
       }
       // One message -> DOM row: head (role, index, excerpt) + expandable body.
       function renderMessage(m) {
@@ -492,6 +534,7 @@
         if (pinnedSession) params.sessionId = pinnedSession;
         if (messagesEnd) params.endOffset = messagesEnd;
         if (currentSearch) params.search = currentSearch;
+        if (roleFilter !== "all") params.role = roleFilter;
         const result = await host.callTool("content", params);
         const data = result?.structuredContent ?? {};
         renderMessages(data);
@@ -611,6 +654,17 @@
       document.getElementById("refresh").addEventListener("click", () => {
         messagesEnd = null;
         void refreshSnapshot();
+      });
+      document.getElementById("role-filter").addEventListener("change", (e) => {
+        roleFilter = e.target.value;
+        messagesEnd = null;
+        void loadMessages();
+      });
+      document.getElementById("expand-all").addEventListener("change", (e) => {
+        messagesExpanded = e.target.checked;
+        for (const row of document.querySelectorAll("#messages-list .msg")) {
+          row.classList.toggle("open", messagesExpanded);
+        }
       });
       document.getElementById("load-older").addEventListener("click", () => {
         messagesEnd = Math.max(1, (messagesEnd ?? lastSnapshot?.log?.stitchedCount ?? messagesLimit) - messagesLimit);

@@ -228,6 +228,7 @@ export async function activate(ctx) {
             limit: { type: "number" },
             offset: { type: "number", description: "tools page offset" },
             search: { type: "string" },
+            role: { type: "string", description: "messages role filter: system|user|assistant|tool" },
         },
       },
         run: async (input, call) => {
@@ -273,22 +274,32 @@ export async function activate(ctx) {
             }
           }
               }
-          // messages: windowed from the end; search reports match count across all
+          // messages: windowed from the end; role/search filters run across ALL messages
           const all = stitched.messages;
           const limit = clampInt(input?.limit, 1, 100, 30);
           let end = clampInt(input?.endOffset, 1, all.length, all.length);
-          let source = all;
+          const role = typeof input?.role === "string" ? input.role : "";
+          let base = all;
+          if (role && role !== "all") {
+            base = base.filter((m) => m.role === role);
+          }
+          let source = base;
           let matchedCount;
           if (search) {
-            const filtered = all.filter((m) => messageText(m).toLowerCase().includes(search));
+            const filtered = base.filter((m) => messageText(m).toLowerCase().includes(search));
             matchedCount = filtered.length;
             source = filtered;
+          }
+          const roleCounts = {};
+          for (const m of all) {
+            roleCounts[m.role ?? "?"] = (roleCounts[m.role ?? "?"] ?? 0) + 1;
           }
           return {
             what: "messages",
             sessionId: resolved.sessionId,
             total: all.length,
             matched: matchedCount,
+            roleCounts,
             end: end,
             messages: source.slice(Math.max(0, end - limit), end).map(capMessage),
           };

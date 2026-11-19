@@ -228,7 +228,7 @@ export async function activate(ctx) {
             limit: { type: "number" },
             offset: { type: "number", description: "tools page offset" },
             search: { type: "string" },
-            role: { type: "string", description: "messages role filter: system|user|assistant|tool" },
+            roles: { type: "array", items: { type: "string" }, description: "roles to show; omit = all, empty = none" },
         },
       },
         run: async (input, call) => {
@@ -278,10 +278,11 @@ export async function activate(ctx) {
           const all = stitched.messages;
           const limit = clampInt(input?.limit, 1, 100, 30);
           let end = clampInt(input?.endOffset, 1, all.length, all.length);
-          const role = typeof input?.role === "string" ? input.role : "";
+          // 多选角色：roles 数组给出要显示的角色集合；空数组 = 全部隐藏（用户可清空聚焦）。
           let base = all;
-          if (role && role !== "all") {
-            base = base.filter((m) => m.role === role);
+          if (Array.isArray(input?.roles)) {
+            const wanted = input.roles.filter((r) => typeof r === "string");
+            base = wanted.length ? base.filter((m) => wanted.includes(m.role)) : [];
           }
           let source = base;
           let matchedCount;

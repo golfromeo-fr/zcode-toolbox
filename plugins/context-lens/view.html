@@ -210,6 +210,18 @@
       }
       .expand-toggle { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
       .role-counts { color: var(--color-text-secondary, #59636e); font-size: 11px; }
+      .role-chips { display: inline-flex; gap: 6px; }
+      .role-chip {
+        font: 11px ui-monospace, monospace;
+        padding: 1px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--color-border-primary, rgba(127,127,127,.25));
+        background: var(--color-background-secondary, rgba(127,127,127,.12));
+        color: var(--color-text-primary, inherit);
+        cursor: pointer;
+      }
+      .role-chip.on { border-color: var(--color-accent-primary, #0969da); color: var(--color-accent-primary, #0969da); }
+      .role-chip.off { opacity: .4; text-decoration: line-through; }
       #errors { color: #cf222e; font-size: 11px; white-space: pre-wrap; }
     </style>
   </head>
@@ -251,13 +263,12 @@
       <summary data-i18n="messages"></summary>
       <div class="section-body">
         <div class="msg-controls">
-          <select id="role-filter">
-            <option value="all" data-i18n="roleAll"></option>
-            <option value="system">system</option>
-            <option value="user">user</option>
-            <option value="assistant">assistant</option>
-            <option value="tool">tool</option>
-          </select>
+          <span class="role-chips" id="role-chips">
+            <button class="role-chip on" data-role="system">system</button>
+            <button class="role-chip on" data-role="user">user</button>
+            <button class="role-chip on" data-role="assistant">assistant</button>
+            <button class="role-chip on" data-role="tool">tool</button>
+          </span>
           <label class="expand-toggle"><input type="checkbox" id="expand-all" /><span data-i18n="expandAll"></span></label>
           <span id="role-counts" class="role-counts"></span>
         </div>
@@ -288,7 +299,6 @@
           search: "search…",
           noLog: "No model-io log for this session — composition only (L1).",
           expandAll: "expand all",
-          roleAll: "all roles",
           staleLog: "Log stitching incomplete (truncated) — showing the last window.",
           loading: "loading…",
           noSession: "No visible session.",
@@ -306,7 +316,6 @@
           search: "搜索…",
           noLog: "该会话没有 model-io 日志 — 仅显示上下文组成（L1）。",
           expandAll: "全部展开",
-          roleAll: "全部角色",
           staleLog: "日志拼接不完整（truncated）— 显示最近窗口。",
           loading: "加载中…",
           noSession: "当前没有可见会话。",
@@ -323,7 +332,7 @@
       let lastSnapshot = null;
       let messagesEnd = null; // exclusive end index for the messages window
       let messagesLimit = 30;
-      let roleFilter = "all";
+      const roleSet = new Set(["system", "user", "assistant", "tool"]);
       let messagesExpanded = false;
       // ---- render helpers ----
       function esc(s) {
@@ -534,7 +543,7 @@
         if (pinnedSession) params.sessionId = pinnedSession;
         if (messagesEnd) params.endOffset = messagesEnd;
         if (currentSearch) params.search = currentSearch;
-        if (roleFilter !== "all") params.role = roleFilter;
+        params.roles = [...roleSet];
         const result = await host.callTool("content", params);
         const data = result?.structuredContent ?? {};
         renderMessages(data);
@@ -655,11 +664,20 @@
         messagesEnd = null;
         void refreshSnapshot();
       });
-      document.getElementById("role-filter").addEventListener("change", (e) => {
-        roleFilter = e.target.value;
-        messagesEnd = null;
-        void loadMessages();
-      });
+      for (const chip of document.querySelectorAll("#role-chips .role-chip")) {
+        chip.addEventListener("click", () => {
+          const role = chip.dataset.role;
+          if (roleSet.has(role)) {
+            roleSet.delete(role);
+          } else {
+            roleSet.add(role);
+          }
+          chip.classList.toggle("on", roleSet.has(role));
+          chip.classList.toggle("off", !roleSet.has(role));
+          messagesEnd = null;
+          void loadMessages();
+        });
+      }
       document.getElementById("expand-all").addEventListener("change", (e) => {
         messagesExpanded = e.target.checked;
         for (const row of document.querySelectorAll("#messages-list .msg")) {

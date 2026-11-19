@@ -289,6 +289,12 @@
     </header>
     <div id="usagebar"><div></div></div>
     <div id="banner"></div>
+    <div id="scrubber" title="history: click = jump window · drag = A-B range (oldest left, newest right)">
+      <div class="scrub-band" id="scrub-window"></div>
+      <div class="scrub-band" id="scrub-range"></div>
+      <span class="scrub-handle" id="scrub-a">A</span>
+      <span class="scrub-handle" id="scrub-b">B</span>
+    </div>
     <div class="toolbar">
       <input id="search" placeholder="search…" />
       <button id="refresh">Refresh</button>
@@ -325,12 +331,6 @@
     <details class="section" id="sec-messages">
       <summary data-i18n="messages"></summary>
       <div class="section-body">
-        <div id="scrubber" title="click/drag: A–B range · plain click: jump window">
-          <div class="scrub-band" id="scrub-window"></div>
-          <div class="scrub-band" id="scrub-range"></div>
-          <span class="scrub-handle" id="scrub-a">A</span>
-          <span class="scrub-handle" id="scrub-b">B</span>
-        </div>
         <div class="msg-controls">
           <span class="role-chips" id="role-chips">
             <button class="role-chip on" data-role="system">system</button>
@@ -848,6 +848,10 @@
       }
       track.addEventListener("pointerdown", (e) => {
         if (!messagesTotal) return;
+        const sec = document.getElementById("sec-messages");
+        if (sec && !sec.open) {
+          sec.open = true;
+        }
         track.setPointerCapture(e.pointerId);
         const gi = scrubGiFromEvent(e);
         if (pointA != null && pointB != null) {

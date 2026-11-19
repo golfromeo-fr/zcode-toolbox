@@ -9,7 +9,7 @@
     {
       "name": "context-lens",
       "source": "./context-lens",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "description": "Side-pane live viewer for the LLM context window: composition, full system prompt, all tool schemas (filter/paging/expand) and message bodies (role chips, search, expand-all, focus pin, newest-first). Composer chip with provider-exact usage %, cache hit and cumulative output.",
       "category": "developer-tools",
       "tags": [

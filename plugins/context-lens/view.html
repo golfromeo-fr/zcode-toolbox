@@ -223,6 +223,43 @@
       .role-chip.on { border-color: var(--color-accent-primary, #0969da); color: var(--color-accent-primary, #0969da); }
       .role-chip.off { opacity: .4; text-decoration: line-through; }
       .msg.pinned { outline: 2px solid var(--color-accent-primary, #0969da); outline-offset: -1px; }
+      #scrubber {
+        position: relative;
+        height: 22px;
+        border-radius: 6px;
+        background: var(--color-background-secondary, rgba(127,127,127,.12));
+        border: 1px solid var(--color-border-primary, rgba(127,127,127,.25));
+        margin-bottom: 8px;
+        cursor: crosshair;
+        touch-action: none;
+        user-select: none;
+      }
+      #scrubber.empty { opacity: .35; cursor: default; }
+      .scrub-band { position: absolute; top: 0; bottom: 0; display: none; }
+      #scrub-window { background: var(--color-accent-primary, #0969da); opacity: .25; }
+      #scrub-range {
+        background: linear-gradient(90deg, rgba(9,105,218,.5), rgba(188,76,0,.5));
+        border-left: 2px solid #0969da;
+        border-right: 2px solid #bc4c00;
+      }
+      .scrub-handle {
+        position: absolute;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        font: 10px ui-monospace, monospace;
+        background: var(--color-background-primary, #fff);
+        border: 2px solid #0969da;
+        color: #0969da;
+        pointer-events: none;
+        z-index: 2;
+      }
+      #scrub-b { border-color: #bc4c00; color: #bc4c00; }
       .pt-btn {
         font: 10px ui-monospace, monospace;
         padding: 0 5px;
@@ -288,6 +325,12 @@
     <details class="section" id="sec-messages">
       <summary data-i18n="messages"></summary>
       <div class="section-body">
+        <div id="scrubber" title="click/drag: A–B range · plain click: jump window">
+          <div class="scrub-band" id="scrub-window"></div>
+          <div class="scrub-band" id="scrub-range"></div>
+          <span class="scrub-handle" id="scrub-a">A</span>
+          <span class="scrub-handle" id="scrub-b">B</span>
+        </div>
         <div class="msg-controls">
           <span class="role-chips" id="role-chips">
             <button class="role-chip on" data-role="system">system</button>
@@ -368,6 +411,8 @@
       let pinnedGi = null;
       let pointA = null;
       let pointB = null;
+      let messagesTotal = null; // 全部消息数（scrubber 轨道长度）
+      let windowGi = null; // {from,to} 当前窗口的全局下标范围
       let toolsOffset = 0;
       let toolsSearch = "";
       let toolsExpanded = false;
@@ -508,6 +553,12 @@
               .join(" · ")
           : "";
         document.getElementById("role-counts").textContent = counts;
+        const gis = data.messages.map((m) => m._gi).filter((v) => v != null);
+        messagesTotal = data.total ?? messagesTotal;
+        windowGi = gis.length
+          ? { from: Math.min(...gis), to: Math.max(...gis) }
+          : null;
+        renderTrack();
         markRangeRows();
       }
       // One message -> DOM row: head (role, index, excerpt) + expandable body.
@@ -636,8 +687,8 @@
         prev.disabled = (data.offset ?? 0) <= 0;
         next.disabled = (data.offset ?? 0) + (data.tools?.length ?? 0) >= (data.total ?? 0);
       }
-      async function loadMessages() {
-        const params = { what: "messages", limit: messagesLimit };
+      async function loadMessages(overrides = {}) {
+        const params = { what: "messages", limit: messagesLimit, ...overrides };
         if (pinnedSession) params.sessionId = pinnedSession;
         if (messagesEnd) params.endOffset = messagesEnd;
         if (currentSearch) params.search = currentSearch;
@@ -743,6 +794,94 @@
           frag.append(o);
         }
         sel.replaceChildren(frag);
+      }
+      // ---- history scrubber ----
+      function renderTrack() {
+        const track = document.getElementById("scrubber");
+        if (!messagesTotal) {
+          track.classList.add("empty");
+          return;
+        }
+        track.classList.remove("empty");
+        const span = Math.max(1, messagesTotal - 1);
+        const pct = (gi) => Math.min(100, Math.max(0, (gi / span) * 100));
+        const win = document.getElementById("scrub-window");
+        if (windowGi) {
+          win.style.display = "block";
+          win.style.left = pct(windowGi.from) + "%";
+          win.style.width = Math.max(0.5, pct(windowGi.to) - pct(windowGi.from)) + "%";
+        } else {
+          win.style.display = "none";
+        }
+        const range = document.getElementById("scrub-range");
+        const ha = document.getElementById("scrub-a");
+        const hb = document.getElementById("scrub-b");
+        if (pointA != null) {
+          ha.style.display = "flex";
+          ha.style.left = pct(pointA) + "%";
+        } else {
+          ha.style.display = "none";
+        }
+        if (pointB != null) {
+          hb.style.display = "flex";
+          hb.style.left = pct(pointB) + "%";
+        } else {
+          hb.style.display = "none";
+        }
+        if (pointA != null && pointB != null) {
+          range.style.display = "block";
+          const lo = Math.min(pointA, pointB);
+          const hi = Math.max(pointA, pointB);
+          range.style.left = pct(lo) + "%";
+          range.style.width = Math.max(0.3, pct(hi) - pct(lo)) + "%";
+        } else {
+          range.style.display = "none";
+        }
+      }
+      const track = document.getElementById("scrubber");
+      let scrubDrag = null;
+      function scrubGiFromEvent(e) {
+        const track = document.getElementById("scrubber");
+        const rect = track.getBoundingClientRect();
+        const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+        return Math.round(frac * Math.max(0, messagesTotal - 1));
+      }
+      track.addEventListener("pointerdown", (e) => {
+        if (!messagesTotal) return;
+        track.setPointerCapture(e.pointerId);
+        const gi = scrubGiFromEvent(e);
+        if (pointA != null && pointB != null) {
+          const da = Math.abs(gi - pointA);
+          const db = Math.abs(gi - pointB);
+          scrubDrag = da <= db ? "a" : "b";
+        } else if (pointA != null) {
+          scrubDrag = "b";
+        } else {
+          scrubDrag = "new-a";
+        }
+        handleScrubMove(gi);
+      });
+      track.addEventListener("pointermove", (e) => {
+        if (!scrubDrag) return;
+        handleScrubMove(scrubGiFromEvent(e));
+      });
+      track.addEventListener("pointerup", () => {
+        if (!scrubDrag) return;
+        const which = scrubDrag;
+        scrubDrag = null;
+        if (which === "new-a" && pointB == null) {
+          messagesEnd = null;
+          void loadMessages({ endGi: pointA });
+          return;
+        }
+        messagesEnd = null;
+        if (pointA != null && pointB != null) void loadMessages();
+      });
+      function handleScrubMove(gi) {
+        if (scrubDrag === "a" || scrubDrag === "new-a") pointA = gi;
+        if (scrubDrag === "b" || scrubDrag === "new-b") pointB = gi;
+        updateRangeBar();
+        renderTrack();
       }
       // ---- wiring ----
       const sel = document.getElementById("session-picker");

@@ -345,7 +345,19 @@ export async function activate(ctx) {
           }
           // 窗口必须按过滤后的列表计算：endOffset 是 source 的下标，不能拿未过滤的
           // all.length 当窗口终点（否则一过滤就切片越界，显示为空）。
-          let end = clampInt(input?.endOffset, 1, Math.max(1, source.length), source.length);
+          // endGi（全局下标）由视图的 scrubber 传入：换算成过滤后列表里的终点。
+          let end;
+          if (input?.endGi != null && Number.isFinite(input.endGi)) {
+            const giLimit = Math.floor(input.endGi);
+            end = clampInt(
+              source.filter((m) => (m._gi ?? 0) <= giLimit).length,
+              1,
+              Math.max(1, source.length),
+              source.length,
+            );
+          } else {
+            end = clampInt(input?.endOffset, 1, Math.max(1, source.length), source.length);
+          }
           const roleCounts = {};
           for (const m of all) {
             roleCounts[m.role ?? "?"] = (roleCounts[m.role ?? "?"] ?? 0) + 1;

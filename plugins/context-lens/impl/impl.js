@@ -276,6 +276,12 @@ export async function activate(ctx) {
               }
           // messages: windowed from the end; role/search filters run across ALL messages
           const all = stitched.messages;
+          // 稳定全局下标（缓存的 stitched 数组只装饰一次）：跨过滤/翻页/刷新都稳定，
+          // 视图用它做 focus 锚点与行号显示。
+          for (let gi = 0; gi < all.length; gi += 1) {
+            const m = all[gi];
+            if (m && typeof m === "object" && m._gi === undefined) m._gi = gi;
+          }
           const limit = clampInt(input?.limit, 1, 100, 30);
           // 多选角色：roles 数组给出要显示的角色集合；空数组 = 全部隐藏（用户可清空聚焦）。
           let base = all;

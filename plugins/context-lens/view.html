@@ -222,6 +222,8 @@
       }
       .role-chip.on { border-color: var(--color-accent-primary, #0969da); color: var(--color-accent-primary, #0969da); }
       .role-chip.off { opacity: .4; text-decoration: line-through; }
+      .msg.pinned { outline: 2px solid var(--color-accent-primary, #0969da); outline-offset: -1px; }
+      .msg > .head { user-select: none; }
       #errors { color: #cf222e; font-size: 11px; white-space: pre-wrap; }
     </style>
   </head>
@@ -270,6 +272,7 @@
             <button class="role-chip on" data-role="tool">tool</button>
           </span>
           <label class="expand-toggle"><input type="checkbox" id="expand-all" /><span data-i18n="expandAll"></span></label>
+          <label class="expand-toggle"><input type="checkbox" id="newest-first" /><span data-i18n="newestFirst"></span></label>
           <span id="role-counts" class="role-counts"></span>
         </div>
         <div id="messages-list"></div>
@@ -299,6 +302,7 @@
           search: "search…",
           noLog: "No model-io log for this session — composition only (L1).",
           expandAll: "expand all",
+          newestFirst: "newest first",
           staleLog: "Log stitching incomplete (truncated) — showing the last window.",
           loading: "loading…",
           noSession: "No visible session.",
@@ -316,6 +320,7 @@
           search: "搜索…",
           noLog: "该会话没有 model-io 日志 — 仅显示上下文组成（L1）。",
           expandAll: "全部展开",
+          newestFirst: "最新在前",
           staleLog: "日志拼接不完整（truncated）— 显示最近窗口。",
           loading: "加载中…",
           noSession: "当前没有可见会话。",
@@ -333,6 +338,8 @@
       let messagesEnd = null; // exclusive end index for the messages window
       let messagesLimit = 30;
       const roleSet = new Set(["system", "user", "assistant", "tool"]);
+      let newestFirst = false;
+      let pinnedGi = null;
       let messagesExpanded = false;
       // ---- render helpers ----
       function esc(s) {
@@ -438,13 +445,31 @@
         let label = from + "-" + data.end + " / " + data.total;
         if (data.matched != null) label = label + " (" + t.matched(data.matched) + ")";
         info.textContent = label;
+        // 重渲染前记录“最上方可见行”的全局下标：过滤/刷新后把视线带回去。
+        let anchorGi = null;
+        for (const row of el.querySelectorAll(".msg")) {
+          const r = row.getBoundingClientRect();
+          if (r.top >= 0 && r.bottom > 0) {
+            anchorGi = Number(row.dataset.gi);
+            break;
+          }
+        }
+        const list = newestFirst ? [...data.messages].reverse() : data.messages;
         const frag = document.createDocumentFragment();
-        for (const m of data.messages) {
+        for (const m of list) {
           const row = renderMessage(m);
           if (messagesExpanded) row.classList.add("open");
           frag.append(row);
         }
         el.replaceChildren(frag);
+        // 焦点恢复：优先 pinned 行，其次原先可见的行；都没有则不动。
+        const targetGi = pinnedGi != null ? pinnedGi : anchorGi;
+        if (targetGi != null) {
+          const target = el.querySelector(`.msg[data-gi="${targetGi}"]`);
+          if (target) {
+            target.scrollIntoView({ block: "center" });
+          }
+        }
         const counts = data.roleCounts
           ? Object.entries(data.roleCounts)
               .map(([k, v]) => k + "×" + v)
@@ -457,14 +482,24 @@
         const row = document.createElement("div");
         row.className = "msg";
         row.dataset.role = m.role ?? "?";
+        row.dataset.gi = String(m._gi ?? "");
+        if (pinnedGi != null && m._gi === pinnedGi) row.classList.add("pinned");
         const head = document.createElement("div");
         head.className = "head";
+        head.addEventListener("click", () => {
+          row.classList.toggle("open");
+          pinnedGi = row.classList.contains("open") ? m._gi : null;
+          for (const other of document.querySelectorAll("#messages-list .msg.pinned")) {
+            if (other !== row) other.classList.remove("pinned");
+          }
+          row.classList.toggle("pinned", pinnedGi != null);
+        });
         const role = document.createElement("span");
         role.className = "role";
         role.textContent = m.role ?? "?";
         const idx = document.createElement("span");
         idx.className = "idx";
-        idx.textContent = "#" + (m._i ?? "?");
+        idx.textContent = "#" + (m._gi ?? "?");
         const excerpt = document.createElement("span");
         excerpt.className = "excerpt";
         excerpt.textContent = messagePreview(m);
@@ -475,7 +510,6 @@
         pre.textContent = messageBodyText(m);
         body.append(pre);
         row.append(head, body);
-        head.addEventListener("click", () => row.classList.toggle("open"));
         return row;
       }
       // Flatten a message for the excerpt / body rendering.
@@ -683,6 +717,10 @@
         for (const row of document.querySelectorAll("#messages-list .msg")) {
           row.classList.toggle("open", messagesExpanded);
         }
+      });
+      document.getElementById("newest-first").addEventListener("change", (e) => {
+        newestFirst = e.target.checked;
+        void loadMessages();
       });
       document.getElementById("load-older").addEventListener("click", () => {
         messagesEnd = Math.max(1, (messagesEnd ?? lastSnapshot?.log?.stitchedCount ?? messagesLimit) - messagesLimit);

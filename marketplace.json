@@ -9,7 +9,7 @@
     {
       "name": "context-lens",
       "source": "./context-lens",
-      "version": "1.3.2",
+      "version": "1.4.0",
       "description": "Live viewer for the LLM context window: composer chip (tok/s, usage %, output tokens, last rate in parentheses) + side-pane view with the full system prompt, all tool schemas and message bodies, stitched from the model-io log.",
       "category": "developer-tools",
       "tags": [

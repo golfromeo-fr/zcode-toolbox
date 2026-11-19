@@ -257,8 +257,14 @@
     <details class="section" id="sec-tools">
       <summary data-i18n="tools"></summary>
       <div class="section-body">
+        <div class="msg-controls">
+          <input id="tools-search" placeholder="filter…" />
+          <button id="tools-prev">‹</button>
+          <button id="tools-next">›</button>
+          <label class="expand-toggle"><input type="checkbox" id="tools-expand" /><span data-i18n="expandAll"></span></label>
+          <span id="tools-info" style="color:var(--color-text-secondary,#59636e)"></span>
+        </div>
         <div id="tools-list"></div>
-        <div id="tools-info" style="color:var(--color-text-secondary,#59636e)"></div>
       </div>
     </details>
     <details class="section" id="sec-messages">
@@ -302,6 +308,7 @@
           search: "search…",
           noLog: "No model-io log for this session — composition only (L1).",
           expandAll: "expand all",
+          filter: "filter…",
           newestFirst: "newest first",
           staleLog: "Log stitching incomplete (truncated) — showing the last window.",
           loading: "loading…",
@@ -320,6 +327,7 @@
           search: "搜索…",
           noLog: "该会话没有 model-io 日志 — 仅显示上下文组成（L1）。",
           expandAll: "全部展开",
+          filter: "过滤…",
           newestFirst: "最新在前",
           staleLog: "日志拼接不完整（truncated）— 显示最近窗口。",
           loading: "加载中…",
@@ -340,6 +348,9 @@
       const roleSet = new Set(["system", "user", "assistant", "tool"]);
       let newestFirst = false;
       let pinnedGi = null;
+      let toolsOffset = 0;
+      let toolsSearch = "";
+      let toolsExpanded = false;
       let messagesExpanded = false;
       // ---- render helpers ----
       function esc(s) {
@@ -423,6 +434,7 @@
         for (const tool of data.tools) {
           const d = document.createElement("details");
           d.className = "tool-item";
+          d.open = toolsExpanded;
           const sum = document.createElement("summary");
           sum.textContent = tool.name;
           const code = document.createElement("pre");
@@ -566,11 +578,16 @@
         renderSystem(data.blocks ?? []);
       }
       async function loadTools() {
-        const params = { what: "tools" };
+        const params = { what: "tools", offset: toolsOffset };
         if (pinnedSession) params.sessionId = pinnedSession;
+        if (toolsSearch) params.search = toolsSearch;
         const result = await host.callTool("content", params);
         const data = result?.structuredContent ?? {};
         renderTools(data);
+        const prev = document.getElementById("tools-prev");
+        const next = document.getElementById("tools-next");
+        prev.disabled = (data.offset ?? 0) <= 0;
+        next.disabled = (data.offset ?? 0) + (data.tools?.length ?? 0) >= (data.total ?? 0);
       }
       async function loadMessages() {
         const params = { what: "messages", limit: messagesLimit };
@@ -722,6 +739,28 @@
         newestFirst = e.target.checked;
         void loadMessages();
       });
+      const toolsSearchEl = document.getElementById("tools-search");
+      let toolsSearchTimer = null;
+      toolsSearchEl.addEventListener("input", () => {
+        toolsSearch = toolsSearchEl.value.trim();
+        toolsOffset = 0;
+        clearTimeout(toolsSearchTimer);
+        toolsSearchTimer = setTimeout(() => void loadTools(), 300);
+      });
+      document.getElementById("tools-prev").addEventListener("click", () => {
+        toolsOffset = Math.max(0, toolsOffset - 40);
+        void loadTools();
+      });
+      document.getElementById("tools-next").addEventListener("click", () => {
+        toolsOffset += 40;
+        void loadTools();
+      });
+      document.getElementById("tools-expand").addEventListener("change", (e) => {
+        toolsExpanded = e.target.checked;
+        for (const d of document.querySelectorAll("#tools-list .tool-item")) {
+          d.open = toolsExpanded;
+        }
+      });
       document.getElementById("load-older").addEventListener("click", () => {
         messagesEnd = Math.max(1, (messagesEnd ?? lastSnapshot?.log?.stitchedCount ?? messagesLimit) - messagesLimit);
         void loadMessages();
@@ -747,6 +786,7 @@
           if (typeof v === "string") el.textContent = v;
         }
         document.getElementById("search").placeholder = t.search;
+        document.getElementById("tools-search").placeholder = t.filter;
         document.getElementById("refresh").textContent = t.refresh;
         document.getElementById("load-older").textContent = t.loadOlder;
       }

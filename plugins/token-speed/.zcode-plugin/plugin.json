@@ -1,0 +1,18 @@
+{
+  "name": "token-speed",
+  "version": "1.0.0",
+  "description": "Composer chip with the live output tokens-per-second: streaming rate while generating, last rate in parentheses when idle. Split out of context-lens so it can be activated on its own.",
+  "extension": {
+    "engines": { "zcode": "^1.0.0" },
+    "main": "./loader.js",
+    "activationEvents": ["onAvailable"],
+    "contributes": {
+      "commands": [
+        { "id": "ping", "title": { "zh-CN": "Token 速率", "en-US": "Token speed" } }
+      ]
+    }
+  },
+  "slots": {
+    "composer.status": [{ "id": "speed", "target": { "command": "ping" } }]
+  }
+}

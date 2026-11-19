@@ -9,14 +9,27 @@
     {
       "name": "context-lens",
       "source": "./context-lens",
-      "version": "1.4.0",
-      "description": "Live viewer for the LLM context window: composer chip (tok/s, usage %, output tokens, last rate in parentheses) + side-pane view with the full system prompt, all tool schemas and message bodies, stitched from the model-io log.",
+      "version": "1.5.0",
+      "description": "Side-pane live viewer for the LLM context window: composition, full system prompt, all tool schemas (filter/paging/expand) and message bodies (role chips, search, expand-all, focus pin, newest-first). Composer chip with provider-exact usage %, cache hit and cumulative output.",
       "category": "developer-tools",
       "tags": [
         "context",
         "tokens",
         "observability",
         "model-io"
+      ]
+    },
+    {
+      "name": "token-speed",
+      "source": "./token-speed",
+      "version": "1.0.0",
+      "description": "Composer chip with the live output tokens-per-second: streaming rate while generating, last rate in parentheses when idle, ttft and totals in the tooltip. Independently activatable.",
+      "category": "developer-tools",
+      "tags": [
+        "tokens",
+        "speed",
+        "tps",
+        "observability"
       ]
     }
   ]

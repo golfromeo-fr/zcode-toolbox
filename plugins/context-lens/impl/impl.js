@@ -105,17 +105,14 @@ export async function activate(ctx) {
     const warn = pct != null && pct >= 85;
     // 壳层在 max-w-40 处 CSS 截断（DESIGN.md composer.status），文本必须紧凑：
     // 分隔符用空格不用 " · "，tok/s 无空格单位，est 标记并入百分比段。
-    const lastTokS = s.lastTokS ? `${s.lastTokS.toFixed(1)}t/s` : null;
     // cache % 仅在 provider 口径时显示（inputTokens 已含 cache，命中率 = cacheRead/input）。
+    // tok/s 不在这里显示：已拆到独立的 token-speed 插件（可单独启停）。
     const cachePct = s.lastCachePct != null ? `c${Math.round(s.lastCachePct)}%` : null;
     let text;
-    if (streamingTokS) {
-      text = `${streamingTokS.toFixed(1)}t/s${pct != null ? ` ${pct}%` : ""}`;
-    } else {
+    {
       const pctPart = pct != null ? `${warn ? "⚠" : ""}${pct}%` : null;
       const outPart = s.outTotal ? `↓${fmtK(s.outTotal)}` : null;
-      const tokPart = lastTokS ? `(${lastTokS})` : null;
-      text = [pctPart, cachePct, outPart, tokPart].filter(Boolean).join(" ");
+      text = [pctPart, cachePct, outPart].filter(Boolean).join(" ");
       if (!text) return;
     }
     if (text.length > 40) text = text.slice(0, 40);
@@ -258,12 +255,22 @@ export async function activate(ctx) {
             for (let i = records.length - 1; i >= 0; i -= 1) {
               const tools = records[i]?.request?.body?.tools;
               if (Array.isArray(tools) && tools.length) {
+                // search 过滤 name/description（大小写不敏感），分页按过滤后的列表算。
+                let list = tools;
+                if (search) {
+                  const needle = search.toLowerCase();
+                  list = tools.filter(
+                    (tl) =>
+                      (tl?.name ?? "").toLowerCase().includes(needle) ||
+                      (tl?.description ?? "").toLowerCase().includes(needle),
+                  );
+                }
                 const start = clampInt(input?.offset, 0, Number.MAX_SAFE_INTEGER, 0);
-                const page = tools.slice(start, start + TOOLS_PAGE);
+                const page = list.slice(start, start + TOOLS_PAGE);
                 return {
                   what,
                   sessionId: resolved.sessionId,
-                  total: tools.length,
+                  total: list.length,
                   offset: start,
                   tools: page.map((t) => ({
                     name: t?.name ?? "(unnamed)",

@@ -1,0 +1,2 @@
+# tool-scratch that plugins drop into whatever cwd they run in (seen: video2code)
+.v2c/

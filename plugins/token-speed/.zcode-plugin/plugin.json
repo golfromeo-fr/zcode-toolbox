@@ -1,18 +1,53 @@
 {
   "name": "token-speed",
-  "version": "1.0.0",
-  "description": "Composer chip with the live output tokens-per-second: streaming rate while generating, last rate in parentheses when idle. Split out of context-lens so it can be activated on its own.",
+  "version": "1.2.0",
+  "description": "Composer chip with the live output tokens-per-second (streaming rate while generating, last rate when idle, ttft and totals in the tooltip), plus subagent tracking: per-call rate in the parent session's chip and a side-pane Subagents view with live rates, totals and status. Independently activatable.",
   "extension": {
-    "engines": { "zcode": "^1.0.0" },
+    "engines": {
+      "zcode": "^1.0.0"
+    },
     "main": "./loader.js",
-    "activationEvents": ["onAvailable"],
+    "activationEvents": [
+      "onAvailable"
+    ],
     "contributes": {
       "commands": [
-        { "id": "ping", "title": { "zh-CN": "Token 速率", "en-US": "Token speed" } }
+        {
+          "id": "open",
+          "title": {
+            "zh-CN": "子代理速率",
+            "en-US": "Subagent speed"
+          }
+        }
+      ],
+      "views": [
+        {
+          "id": "subagents",
+          "title": {
+            "zh-CN": "子代理速率",
+            "en-US": "Subagent speed"
+          },
+          "icon": "gauge"
+        }
       ]
     }
   },
   "slots": {
-    "composer.status": [{ "id": "speed", "target": { "command": "ping" } }]
+    "composer.status": [
+      {
+        "id": "speed",
+        "target": {
+          "command": "open"
+        }
+      }
+    ],
+    "sidePane.launcher": [
+      {
+        "id": "open-view",
+        "target": {
+          "view": "subagents"
+        }
+      }
+    ]
   }
 }

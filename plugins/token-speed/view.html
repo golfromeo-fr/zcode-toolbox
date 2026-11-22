@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Subagent speed</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: var(--zcode-font-family, system-ui, sans-serif);
+        font-size: 12px;
+      }
+      body {
+        margin: 0;
+        padding: 10px;
+        background: var(--zcode-bg, transparent);
+        color: var(--zcode-fg, inherit);
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      header h1 { font-size: 13px; margin: 0; font-weight: 600; }
+      header .meta { opacity: 0.6; font-size: 11px; }
+      header .spacer { flex: 1; }
+      #errors {
+        color: #e5534b; font-size: 11px; white-space: pre-wrap;
+        margin: 0 0 8px; display: none;
+      }
+      #empty { opacity: 0.55; padding: 24px 8px; text-align: center; font-size: 12px; }
+      .row {
+        display: flex; align-items: center; gap: 8px;
+        padding: 7px 8px; margin-bottom: 6px; border-radius: 8px;
+        background: var(--zcode-bg-secondary, rgba(127, 127, 127, 0.08));
+      }
+      .row .dot {
+        width: 8px; height: 8px; border-radius: 50%; flex: none;
+        background: #6e7681;
+      }
+      .row.running .dot { background: #3fb950; animation: pulse 1.6s ease-in-out infinite; }
+      @keyframes pulse { 50% { opacity: 0.35; } }
+      .row.recent .dot { background: #d29922; }
+      .row .main { flex: 1; min-width: 0; }
+      .row .desc {
+        font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .row .sub {
+        font-size: 11px; opacity: 0.65; white-space: nowrap; overflow: hidden;
+        text-overflow: ellipsis; margin-top: 1px;
+      }
+      .row .rate { font-variant-numeric: tabular-nums; font-weight: 600; flex: none; }
+      .row .rate .unit { font-weight: 400; opacity: 0.6; font-size: 11px; }
+      .row .badge {
+        flex: none; font-size: 10px; padding: 1px 6px; border-radius: 999px;
+        border: 1px solid rgba(127, 127, 127, 0.4); opacity: 0.8;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1 data-i18n="title">Subagent speed</h1>
+      <span class="meta" id="meta"></span>
+      <span class="spacer"></span>
+      <span class="meta" id="updated"></span>
+    </header>
+    <pre id="errors"></pre>
+    <div id="empty" data-i18n="empty" hidden>No subagent activity yet — spawn an agent and its live tok/s shows here.</div>
+    <div id="rows"></div>
+    <script>
+      "use strict";
+      const I18N = {
+        en: {
+          title: "Subagent speed", empty: "No subagent activity yet — spawn an agent and its live tok/s shows here.",
+          running: "running", recent: "just finished", out: "out", calls: "calls", updated: "updated",
+        },
+        zh: {
+          title: "子代理速率", empty: "暂无子代理活动 — 启动代理后，其实时 tok/s 会显示在这里。",
+          running: "运行中", recent: "刚结束", out: "输出", calls: "次调用", updated: "更新于",
+        },
+      };
+      const locale = String((window.host?.locale ?? "en")).toLowerCase().startsWith("zh") ? "zh" : "en";
+      const t = I18N[locale];
+
+      const $ = (id) => document.getElementById(id);
+      const esc = (s) =>
+        String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      const fmtK = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(Math.round(n)));
+      window.onerror = (m) => { $("errors").style.display = "block"; $("errors").textContent += `${m}\n`; };
+      window.onunhandledrejection = (e) => { $("errors").style.display = "block"; $("errors").textContent += `${e?.reason ?? e}\n`; };
+
+      function render(d) {
+        const agents = Array.isArray(d?.agents) ? d.agents : [];
+        $("meta").textContent = agents.length ? `${agents.length}` : "";
+        $("empty").hidden = agents.length > 0;
+        $("updated").textContent = agents.length ? `${t.updated} ${new Date().toLocaleTimeString()}` : "";
+        const rows = agents.map((a) => {
+          const state = a.running ? "running" : a.recent ? "recent" : "";
+          const rate = a.lastRate != null ? a.lastRate.toFixed(1) : "—";
+          const sub = [
+            a.parentShort ? `${esc(a.parentShort)}` : null,
+            a.model ? esc(a.model) : null,
+            a.outTotal ? `${t.out} ${fmtK(a.outTotal)}` : null,
+            a.rounds ? `${a.rounds} ${t.calls}` : null,
+            a.status && !a.running ? esc(a.status) : null,
+          ].filter(Boolean).join(" · ");
+          return `<div class="row ${state}" title="${esc(a.agentId)}">
+            <span class="dot"></span>
+            <div class="main">
+              <div class="desc">${esc(a.description || a.agentIdShort || "agent")}</div>
+              <div class="sub">${sub}</div>
+            </div>
+            ${a.running || a.recent ? `<span class="badge">${a.running ? t.running : t.recent}</span>` : ""}
+            <span class="rate">${rate}<span class="unit"> t/s</span></span>
+          </div>`;
+        });
+        $("rows").innerHTML = rows.join("");
+      }
+
+      async function refresh() {
+        try {
+          const result = await host.callTool("list", {});
+          render(result?.structuredContent ?? result);
+        } catch (e) {
+          window.onerror(String(e));
+        }
+      }
+
+      let stateUri = null;
+      host.subscribe(() => {});
+      host.onResourceUpdated((uri) => { if (uri === stateUri) void refresh(); });
+      host.ready().then(async () => {
+        applyHostStyles();
+        for (const el of document.querySelectorAll("[data-i18n]")) {
+          const v = t[el.dataset.i18n];
+          if (typeof v === "string") el.textContent = v;
+        }
+        try {
+          const resources = await host.listResources();
+          stateUri = resources.resources.find((r) => r.uri.endsWith("/state"))?.uri ?? null;
+          if (stateUri) await host.subscribeResource(stateUri);
+        } catch (e) { window.onerror(String(e)); }
+        await refresh();
+      });
+      function applyHostStyles() {
+        const variables = host.hostContext?.styles?.variables ?? {};
+        for (const [name, value] of Object.entries(variables)) {
+          if (typeof value === "string") document.documentElement.style.setProperty(name, value);
+        }
+        document.documentElement.dataset.theme = host.theme ?? "";
+      }
+    </script>
+  </body>
+</html>

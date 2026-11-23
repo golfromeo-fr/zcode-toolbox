@@ -24,6 +24,7 @@
         color: inherit; font: inherit; padding: 2px 6px; min-width: 0; flex: 1;
       }
       .copycode { cursor: pointer; }
+      .sel { font-family: ui-monospace, Menlo, Consolas, monospace; cursor: text; }
       #use-wrap {
         max-height: 45vh; overflow: auto; margin-top: 4px;
         border: 1px solid rgba(127,127,127,0.35); border-radius: 4px;
@@ -54,7 +55,14 @@
       <div class="card" id="card-login"><h2>Connect GitHub account</h2>
         <div class="row"><input id="login-label" placeholder="account name (e.g. work)" />
         <button id="btn-login" class="badge">login…</button></div>
-        <div class="meta" style="margin-top:4px">Opens github.com/login/device in your browser — type the code shown below. Click a code to copy it.</div>
+        <div class="meta" style="margin-top:4px">A one-time code appears below. The address never changes, so both can be typed by hand in any browser.</div>
+        <div id="login-flow" hidden>
+          <div class="row"><span class="meta">address</span><input id="login-url" class="sel" readonly />
+          <button id="btn-copy-url" class="badge">copy</button></div>
+          <div class="row"><span class="meta">code</span><input id="login-code" class="sel" readonly />
+          <button id="btn-copy-code" class="badge">copy</button></div>
+          <div class="meta" id="login-msg"></div>
+        </div>
       </div>
       <div class="card" id="card-accounts"><h2>Accounts</h2><div id="accounts"></div></div>
       <div class="card" id="card-logins"><h2>Pending logins</h2><div id="logins"></div></div>
@@ -65,14 +73,13 @@
       </div>
       <div class="card" id="card-use"><h2>Harness config</h2>
         <div class="row"><span class="grow meta">Regenerate provider config (reuses your saved key)</span>
-        <button id="btn-copy-config" class="badge" style="display:none">copy</button>
         <button id="btn-config" class="badge">config…</button></div>
         <div class="row"><span class="grow meta">Create a new key (raw value shown once) + its config</span>
         <button id="btn-newkey" class="badge">new key…</button></div>
         <div class="row"><span class="grow meta">Update the gateway git tree (fetch, reset, reinstall, restart)</span>
         <button id="btn-update" class="badge">update…</button></div>
         <div id="use-wrap" hidden>
-          <div class="usebar"><button id="btn-copy-config" class="badge">copy config</button></div>
+          <div class="usebar"><button id="btn-copy-config" class="badge">copy</button></div>
           <pre id="use-out"></pre>
         </div>
       </div>
@@ -124,6 +131,16 @@
         renderLogins(st);
         renderKeys(st);
         renderUsage(st);
+        // keep the login block in step with the refresh: a pending code stays
+        // visible, a finished or dead attempt says so
+        const logins = Array.isArray(st.pendingLogins) ? st.pendingLogins : [];
+        const mine = logins.find((p) => p.label === loginFlow?.label) ?? logins[0];
+        if (mine) showLogin(mine, loginFlow?.openedInBrowser);
+        else if (loginFlow && (st.accounts ?? []).some((a) => a.label === loginFlow.label)) {
+          $("login-flow").hidden = false;
+          $("login-code").value = "";
+          $("login-msg").textContent = `Connected as '${loginFlow.label}'. Next: Harness config → config…`;
+        }
       }
 
       function renderAccounts(st) {
@@ -138,11 +155,14 @@
       function renderLogins(st) {
         const pend = Array.isArray(st.pendingLogins) ? st.pendingLogins : [];
         $("card-logins").hidden = pend.length === 0;
-        $("logins").innerHTML = pend.map((p) =>
-          `<div class="row"><span class="grow">${esc(p.label)}</span>
-           <span class="meta">code <b class="copycode" data-code="${esc(p.code ?? "")}">${esc(p.code ?? "…")}</b></span>
-           ${p.url ? `<a class="badge" href="${esc(p.url)}">${esc(p.url)}</a>` : ""}</div>`).join("");
-  }
+        const ROW_TEXT = { starting: "waiting for code…", failed: "failed", expired: "code expired" };
+        $("logins").innerHTML = pend.map((p) => {
+          const right = p.phase === "awaiting-authorization"
+            ? `<span class="meta">code <b class="copycode" data-code="${esc(p.code ?? "")}">${esc(p.code ?? "…")}</b></span>`
+            : `<span class="meta">${esc(ROW_TEXT[p.phase] ?? p.phase)}</span>`;
+          return `<div class="row"><span class="grow">${esc(p.label)}</span>${right}</div>`;
+        }).join("");
+      }
       function renderKeys(st) {
         const keys = Array.isArray(st.keys) ? st.keys : [];
         const labels = (st.accounts ?? []).map((a) => esc(a.label));
@@ -190,6 +210,70 @@
         }
       }
 
+      // ---- copy helpers ----
+      // Clipboard access is not guaranteed in the view (and the clipboard may
+      // not be shared with the machine the browser is on): try the async API,
+      // then the legacy path, and report success so the caller can say "type it".
+      async function copyText(text) {
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+          }
+        } catch { /* fall through to the legacy path */ }
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand("copy");
+          ta.remove();
+          return ok === true;
+        } catch {
+          return false;
+        }
+      }
+      function flash(btn, text) {
+        if (btn._label === undefined) btn._label = btn.textContent;
+        btn.textContent = text;
+        clearTimeout(btn._timer);
+        btn._timer = setTimeout(() => { btn.textContent = btn._label; }, 1500);
+      }
+      function selectAll(el) {
+        try { el.focus(); el.select(); } catch { }
+      }
+
+      // ---- login block ----
+      // The browser is not always on this machine (VMs, remote desktops) and
+      // the clipboard is not always shared, so the address and the code are
+      // shown as plain text to type by hand; copy is only a convenience.
+      let loginFlow = null; // { label, openedInBrowser } of the attempt on display
+      const LOGIN_MSG = {
+        "awaiting-authorization": () => loginFlow?.openedInBrowser === true
+          ? "A browser page was opened on this machine: enter the code there."
+          : "No browser could be opened from here. Type the address in any browser (this machine, your phone, another computer — anywhere you are signed in to GitHub), then enter the code.",
+        starting: "Waiting for GitHub to issue a code… If this persists, this machine may not be able to reach github.com.",
+        failed: "Login failed — press login… to try again.",
+        expired: "The code expired — press login… for a new one.",
+        connected: "This account is already connected.",
+      };
+      function showLogin(p, openedInBrowser) {
+        loginFlow = {
+          label: p.label ?? loginFlow?.label ?? null,
+          openedInBrowser: openedInBrowser ?? loginFlow?.openedInBrowser,
+        };
+        $("login-flow").hidden = false;
+        $("login-url").value = p.url || "https://github.com/login/device";
+        $("login-code").value = p.phase === "awaiting-authorization" ? (p.code ?? "") : "";
+        const msg = LOGIN_MSG[p.phase];
+        const text = typeof msg === "function" ? msg() : (msg ?? "");
+        $("login-msg").textContent = [text, p.phase === "failed" && p.logTail ? `Details: ${String(p.logTail).trim().slice(-300)}` : ""]
+          .filter(Boolean).join(" ");
+      }
+
       function showConfig(out) {
         const box = $("use-out");
         $("use-wrap").hidden = false;
@@ -202,7 +286,6 @@
               out.note ?? "",
             ].join("\n")
           : `failed: ${out?.error ?? "unknown"}`;
-        $("btn-copy-config").style.display = out?.ok ? "" : "none";
         $("use-wrap").scrollTop = 0;
       }
       $("btn-config").addEventListener("click", async () => {
@@ -213,7 +296,7 @@
         showConfig(await callTool("use", { keyName: name }));
       });
       $("btn-copy-config").addEventListener("click", async () => {
-        try { await navigator.clipboard.writeText($("use-out").textContent); } catch { }
+        flash($("btn-copy-config"), (await copyText($("use-out").textContent)) ? "copied" : "not copied — type it");
       });
 
       $("btn-update").addEventListener("click", async () => {
@@ -227,15 +310,30 @@
       });
 
       $("btn-login").addEventListener("click", async () => {
+        const btn = $("btn-login");
         const label = $("login-label").value.trim() || "github";
+        btn.disabled = true;
+        btn.textContent = "waiting…";
         const out = await callTool("login", { label });
-        const box = $("use-out");
-        box.style.display = "block";
-        box.textContent = out?.code
-          ? `code ${out.code} — ${out.openedInBrowser ? "github.com/login/device opened in your browser" : `open ${out.url ?? "github.com/login/device"} manually`} and type the code`
-          : `login failed: ${out?.error ?? "unknown"}`;
+        btn.disabled = false;
+        btn.textContent = "login…";
+        if (out?.ok) {
+          showLogin({ phase: "starting", ...out }, out.openedInBrowser);
+        } else {
+          $("login-flow").hidden = false;
+          $("login-code").value = "";
+          $("login-msg").textContent = `Login failed: ${out?.error ?? "unknown"}`;
+        }
         await refresh();
       });
+      for (const [btnId, fieldId] of [["btn-copy-url", "login-url"], ["btn-copy-code", "login-code"]]) {
+        $(btnId).addEventListener("click", async () => {
+          const ok = await copyText($(fieldId).value);
+          flash($(btnId), ok ? "copied" : "not copied — type it");
+          if (!ok) selectAll($(fieldId));
+        });
+        $(fieldId).addEventListener("click", () => selectAll($(fieldId)));
+      }
 
       $("btn-start").addEventListener("click", async () => {
         const btn = $("btn-start");
@@ -257,7 +355,7 @@
       document.addEventListener("click", async (e) => {
         const el = e.target.closest(".copycode");
         if (!el) return;
-        try { await navigator.clipboard.writeText(el.dataset.code ?? el.textContent); } catch { }
+        flash(el, (await copyText(el.dataset.code ?? el.textContent)) ? "copied" : "not copied — type it");
       });
       document.addEventListener("change", async (e) => {
         const sel = e.target.closest("select.pin");

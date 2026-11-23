@@ -555,24 +555,40 @@ export async function gatewayStop() {
   const h = await healthz();
   return { ok: !h.up, via: "pkill", ...h };
 }
-import { openSync, closeSync, readFileSync, existsSync, rmSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
+import { openSync, closeSync, readFileSync, existsSync, rmSync, writeFileSync, mkdirSync, copyFileSync, statSync } from "node:fs";
 
 const DATA_DIR = process.env.CRISPY_GATEWAY_RUNTIME_DIR || join(homedir(), ".zcode", "plugin-data", "copilot-gateway");
 
-// Open the system default browser: the device flow needs the USER's browser
-// session (their GitHub login), and plugin views cannot reliably open links.
-function openInBrowser(url) {
+// Best effort: ask the OS to open the URL in the default browser. Resolves true
+// only when an opener really launched it (found + exit 0); false when there is
+// none (no xdg-open or no default browser: common on VMs and remote desktops).
+// Callers must still show the URL as text that can be typed by hand.
+export async function openInBrowser(url) {
   const cmd = process.platform === "darwin" ? "open"
     : process.platform === "win32" ? "cmd" : "xdg-open";
   const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
-  try {
-    const child = spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true });
-    child.on("error", () => {});
+  return new Promise((resolve) => {
+    let child;
+    let timer = null;
+    let settled = false;
+    const done = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    try {
+      child = spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true });
+    } catch {
+      return resolve(false);
+    }
+    // openers hand the URL over and exit at once; if one keeps running, assume
+    // it did its job rather than wait on it
+    timer = setTimeout(() => done(true), 5000);
+    child.on("error", () => done(false));
+    child.on("exit", (code) => done(code === 0));
     child.unref();
-    return true;
-  } catch {
-    return false;
-  }
+  });
 }
 
 export async function gatewayLogin(label) {
@@ -594,7 +610,7 @@ export async function gatewayLogin(label) {
   await new Promise((r) => setTimeout(r, 3000));
   const state = await loginState(safe);
   if (state.code) {
-    state.openedInBrowser = openInBrowser(state.url || "https://github.com/login/device");
+    state.openedInBrowser = await openInBrowser(state.url || "https://github.com/login/device");
   }
   return { ok: true, ...state };
 }
@@ -604,19 +620,27 @@ export async function loginState(label) {
   if (!safe) return { phase: "idle" };
   const logPath = join(DATA_DIR, `login-${safe}.log`);
   let log = "";
+  let ageMs = null; // since the log's last write (the CLI flushes each line)
   try {
     log = readFileSync(logPath, "utf8");
-    log = readFileSync(logPath, "utf8");
+    ageMs = Date.now() - statSync(logPath).mtimeMs;
   } catch {
     return { phase: "no-login-started", label: safe };
- 
   }
   const code = (log.match(/One-time code: (\S+)/) || [])[1] ?? null;
   const url = (log.match(/Open (\S+)/) || [])[1] ?? null;
   const conns = await connections();
   if (conns.some((c) => c.label === safe)) return { phase: "connected", label: safe, logTail: log.slice(-200) };
   if (log.includes("Device flow failed")) return { phase: "failed", label: safe, logTail: log.slice(-200) };
-  if (code) return { phase: "awaiting-authorization", label: safe, code, url, logTail: log.slice(-200) };
+  if (code) {
+    // GitHub device codes live ~15 minutes: an older log is a dead attempt,
+    // and offering its code would only get the user an "expired" page.
+    if (ageMs > 16 * 60_000) return { phase: "expired", label: safe, code, url };
+    return { phase: "awaiting-authorization", label: safe, code, url, logTail: log.slice(-200) };
+  }
+  // No code yet: normal for the first seconds. An older log means the start
+  // itself died (network, proxy): surface its tail instead of waiting forever.
+  if (ageMs > 20_000) return { phase: "failed", label: safe, logTail: log.slice(-300) };
   return { phase: "starting", label: safe };
 }
 export async function gatewayStatus() {
@@ -650,8 +674,10 @@ export async function gatewayStatus() {
   };
 }
 
-// In-flight device-flow logins: login-<label>.log files whose label is not
-// yet connected. Cheap enough for the 5s view tick.
+// Device-flow attempts found in the runtime dir (login-<label>.log), for the
+// 5s view tick. Connected labels are skipped; everything else is listed so a
+// pending, dead or failed attempt gets explained instead of silently dropped.
+const LISTED_LOGIN_PHASES = new Set(["awaiting-authorization", "starting", "failed", "expired"]);
 export async function listPendingLogins() {
   let names = [];
   try {
@@ -663,7 +689,7 @@ export async function listPendingLogins() {
   for (const f of names.filter((n) => n.startsWith("login-") && n.endsWith(".log"))) {
     const label = f.slice("login-".length, -".log".length);
     const st = await loginState(label);
-    if (st.phase === "awaiting-authorization" || st.phase === "starting") out.push(st);
+    if (LISTED_LOGIN_PHASES.has(st.phase)) out.push(st);
   }
   return out;
 }

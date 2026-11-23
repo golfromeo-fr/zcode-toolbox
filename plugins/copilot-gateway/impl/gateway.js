@@ -6,7 +6,7 @@
 import { readFile, writeFile, rename, chmod, appendFile, mkdir } from "node:fs/promises";
 import { spawn, execFile } from "node:child_process";
 import { join } from "node:path";
-import { homedir, devNull } from "node:os";
+import { homedir } from "node:os";
 
 const APP_NAME = "crispy-copilot-gateway";
 const IS_WIN = process.platform === "win32";
@@ -210,6 +210,23 @@ function runStep(cmd, args, timeoutMs) {
 // from config), credential helpers are cleared, and terminal prompting is
 // disabled. The repo is public https; if it ever goes private the plugin
 // fails fast instead of silently using the user's GitHub credentials.
+// hermetic git config: a real empty file, NOT a device path. git-for-windows
+// normalizes os.devNull (\\.\nul) to //./nul and then treats it as a remote
+// ("unable to access '//./nul'"); /dev/null only works via mingw mapping. An
+// empty regular file is unambiguous on every platform.
+let emptyGitCfgPath = null;
+function emptyGitConfig() {
+  if (emptyGitCfgPath) return emptyGitCfgPath;
+  const runtimeDir = process.env.ZCODE_PLUGIN_DATA
+    || join(homedir(), ".zcode", "plugins", "copilot-gateway");
+  emptyGitCfgPath = join(runtimeDir, "gitconfig-empty");
+  try {
+    mkdirSync(runtimeDir, { recursive: true });
+    writeFileSync(emptyGitCfgPath, "", { mode: 0o600 });
+  } catch { }
+  return emptyGitCfgPath;
+}
+
 function gitAnon(args, timeoutMs) {
   return new Promise((resolve) => {
     resolveGit().then((gitPath) => {
@@ -220,7 +237,7 @@ function gitAnon(args, timeoutMs) {
       execFile(gitPath, ["-c", "credential.helper=", ...args], {
         timeout: timeoutMs,
         maxBuffer: 1 << 22,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_SYSTEM: devNull },
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_GLOBAL: emptyGitConfig(), GIT_CONFIG_SYSTEM: emptyGitConfig() },
       }, (err, stdout, stderr) =>
         resolve({ ok: !err, stdout: String(stdout || ""), stderr: String(stderr || "") }));
     });
@@ -458,7 +475,7 @@ export async function gatewayStop() {
   const h = await healthz();
   return { ok: !h.up, via: "pkill", ...h };
 }
-import { openSync, closeSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { openSync, closeSync, readFileSync, existsSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 
 const DATA_DIR = process.env.ZCODE_PLUGIN_DATA || join(homedir(), ".zcode", "plugins", "copilot-gateway");
 

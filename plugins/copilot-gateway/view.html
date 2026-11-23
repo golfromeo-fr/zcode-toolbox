@@ -55,9 +55,9 @@
       <div class="card" id="card-login"><h2>Connect GitHub account</h2>
         <div class="row"><input id="login-label" placeholder="account name (e.g. work)" />
         <button id="btn-login" class="badge">login…</button></div>
-        <div class="meta" style="margin-top:4px">A one-time code and the address to enter it appear below as text, so both can be typed by hand in any browser.</div>
+        <div class="meta" style="margin-top:4px">After login… the one-time code and the link to enter it appear below as text, to type by hand in any browser if none opens here.</div>
         <div id="login-flow" hidden>
-          <div class="row"><span class="meta">address</span><input id="login-url" class="sel" readonly />
+          <div class="row"><span class="meta">link</span><input id="login-url" class="sel" readonly />
           <button id="btn-copy-url" class="badge">copy</button></div>
           <div class="row"><span class="meta">code</span><input id="login-code" class="sel" readonly />
           <button id="btn-copy-code" class="badge">copy</button></div>
@@ -253,8 +253,8 @@
       let loginFlow = null; // { label, openedInBrowser } of the attempt on display
       const LOGIN_MSG = {
         "awaiting-authorization": () => loginFlow?.openedInBrowser === true
-          ? "A browser page was opened on this machine: enter the code there."
-          : "No browser could be opened from here. Type the address in any browser (this machine, your phone, another computer — anywhere you are signed in to GitHub), then enter the code.",
+          ? "A browser page was asked to open on this machine. If none appeared, type the link above in any browser (this machine, your phone, another computer — anywhere you are signed in to GitHub), then enter the code."
+          : "No browser could be opened from here. Type the link above in any browser (this machine, your phone, another computer — anywhere you are signed in to GitHub), then enter the code.",
         starting: "Waiting for GitHub to issue a code… If this persists, this machine may not be able to reach github.com.",
         failed: "Login failed — press login… to try again.",
         expired: "The code expired — press login… for a new one.",
@@ -272,7 +272,7 @@
         const msg = LOGIN_MSG[p.phase];
         const text = typeof msg === "function" ? msg() : (msg ?? "");
         const noAddress = p.phase === "awaiting-authorization" && !p.url
-          ? "No address came back with this code: check the \"Open …\" line in the login log." : "";
+          ? "No link came back with this code: check the \"Open …\" line in the login log." : "";
         $("login-msg").textContent = [text, noAddress, p.phase === "failed" && p.logTail ? `Details: ${String(p.logTail).trim().slice(-300)}` : ""]
           .filter(Boolean).join(" ");
       }

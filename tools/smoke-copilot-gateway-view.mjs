@@ -159,7 +159,7 @@ await check("login: address and code shown as text when no browser opened", asyn
   assert.equal(el("login-flow").hidden, false);
   assert.equal(el("login-url").value, "https://github.com/login/device");
   assert.equal(el("login-code").value, "ABCD-1234");
-  assert.match(el("login-msg").textContent, /Type the address in any browser/);
+  assert.match(el("login-msg").textContent, /No browser could be opened from here\. Type the link above/);
   assert.equal(el("btn-login").textContent, "login…");
   assert.equal(el("btn-login").disabled, false);
 });
@@ -167,7 +167,8 @@ await check("login: address and code shown as text when no browser opened", asyn
 await check("login: message when a browser did open", async () => {
   tools.login = () => login({ code: "WXYZ-5678", openedInBrowser: true });
   await click("btn-login");
-  assert.match(el("login-msg").textContent, /browser page was opened/);
+  // an opener can exit cleanly without anything appearing: the link stays the fallback
+  assert.match(el("login-msg").textContent, /asked to open on this machine\. If none appeared, type the link above/);
   assert.equal(el("login-code").value, "WXYZ-5678");
 });
 
@@ -214,7 +215,7 @@ await check("refresh: no address returned with the code says so, no guess", asyn
   await refresh(base({ pendingLogins: [{ phase: "awaiting-authorization", label: "work", code: "ABCD-1234" }] }));
   assert.equal(el("login-url").value, "");
   assert.equal(el("login-code").value, "ABCD-1234");
-  assert.match(el("login-msg").textContent, /No address came back/);
+  assert.match(el("login-msg").textContent, /No link came back/);
 });
 
 await check("pending list: click the code to copy it", async () => {

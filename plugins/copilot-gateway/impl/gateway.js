@@ -656,26 +656,40 @@ export async function gatewayUse(keyName = "zcode") {
   const existing = keys.find((k) => k.name === keyName);
   let raw = null;
   let note = null;
+  let rawIsTemp = false;
+  let tempName = null;
   if (existing) {
-    note = `key '${keyName}' exists; its raw value was shown once at creation. Revoke + recreate to get a new one, or paste your saved value.`;
+    // The saved key's raw value is unrecoverable (hashes only), but the config
+    // must still be complete: borrow a throwaway key to read the catalog,
+    // then revoke it immediately.
+    note = `reusing existing key '${keyName}' (raw value not recoverable - paste your saved one); catalog read via a temporary key, revoked right after`;
+    tempName = `${keyName}-catalog-tmp`;
+    let made = await keyCreate(tempName);
+    if (!made.ok && /already exists/.test(made.error ?? "")) {
+      await keyRevoke(tempName); // stale temp key from an earlier crashed run
+      made = await keyCreate(tempName);
+    }
+    if (made.ok) { raw = made.raw; rawIsTemp = true; }
   } else {
     const created = await keyCreate(keyName);
     if (!created.ok) return { ok: false, ...created };
     raw = created.raw;
   }
   const models = raw ? await fetchModels(raw) : { models: null, models_full: null };
+  if (rawIsTemp) await keyRevoke(tempName ?? "");
+  const apiKeyOut = raw && !rawIsTemp ? raw : `<value of existing key '${keyName}'>`;
   return {
     ok: true,
     keyName,
     baseUrl: cfg.baseUrl,
-    apiKey: raw ?? `<value of existing key '${keyName}'>`,
-    note,
+    apiKey: apiKeyOut,
+    note: rawIsTemp && !models.models_full ? (note + ` (catalog fetch failed: ${models.error ?? "unknown"})`) : note,
     models: models.models,
     models_full: models.models_full ?? null,
     modelsError: models.error ?? null,
     provider: {
       baseUrl: `${cfg.baseUrl}/v1`,
-      apiKey: raw ?? `<value of existing key '${keyName}'>`,
+      apiKey: apiKeyOut,
       // full catalog entries: vision / reasoning_effort / tool_calls / limits /
       // per-M prices per model - enough for a harness to configure options
       models: models.models_full ?? models.models,

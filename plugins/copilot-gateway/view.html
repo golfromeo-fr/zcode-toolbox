@@ -55,6 +55,7 @@
       </div>
       <div class="card" id="card-use"><h2>Connect a harness</h2>
         <div class="row"><span class="grow meta">Find-or-create a proxy key and print provider config</span>
+        <button id="btn-copy-use" class="badge" style="display:none">copy</button>
         <button id="btn-use" class="badge">connect…</button></div>
         <div class="row"><span class="grow meta">Update the gateway git tree (fetch, reset, reinstall, restart)</span>
         <button id="btn-update" class="badge">update…</button></div>
@@ -187,6 +188,10 @@
               out.note ?? "",
             ].join("\n")
           : `failed: ${out?.error ?? "unknown"}`;
+        $("btn-copy-use").style.display = out?.ok ? "" : "none";
+      });
+      $("btn-copy-use").addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText($("use-out").textContent); } catch { }
       });
 
       $("btn-update").addEventListener("click", async () => {

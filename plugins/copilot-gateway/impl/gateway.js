@@ -181,7 +181,7 @@ export async function usageData(limit = 8) {
     const raw = await new Promise((resolve, reject) => {
       execFile(
         cfg.py, ["-I", "-c", script],
-        { timeout: 5000, maxBuffer: 1 << 20, env: { ...process.env, CRISPY_COPILOT_DATA_DIR: cfg.dataDir } },
+        { timeout: 5000, maxBuffer: 1 << 20, windowsHide: true, env: { ...process.env, CRISPY_COPILOT_DATA_DIR: cfg.dataDir } },
         (err, stdout) => (err ? reject(err) : resolve(stdout)),
       );
     });
@@ -200,7 +200,7 @@ function appendLog(cfg, line) {
 
 function runStep(cmd, args, timeoutMs) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 1 << 22 }, (err, stdout, stderr) =>
+    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 1 << 22, windowsHide: true }, (err, stdout, stderr) =>
       resolve({ ok: !err, stdout: String(stdout || ""), stderr: String(stderr || "") }));
   });
 }
@@ -237,6 +237,7 @@ function gitAnon(args, timeoutMs) {
       execFile(gitPath, ["-c", "credential.helper=", ...args], {
         timeout: timeoutMs,
         maxBuffer: 1 << 22,
+        windowsHide: true,
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_GLOBAL: emptyGitConfig(), GIT_CONFIG_SYSTEM: emptyGitConfig() },
       }, (err, stdout, stderr) =>
         resolve({ ok: !err, stdout: String(stdout || ""), stderr: String(stderr || "") }));
@@ -386,6 +387,7 @@ export async function gatewayStart() {
     const log = openSync(cfg.serveLog, "a");
     const child = spawn(cfg.cli, ["serve", "--host", cfg.host, "--port", String(cfg.port)], {
       detached: true,
+      windowsHide: true,
       stdio: ["ignore", log, log],
       env: { ...process.env, CRISPY_COPILOT_DATA_DIR: cfg.dataDir },
     });
@@ -486,7 +488,7 @@ function openInBrowser(url) {
     : process.platform === "win32" ? "cmd" : "xdg-open";
   const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
   try {
-    const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+    const child = spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true });
     child.on("error", () => {});
     child.unref();
     return true;
@@ -505,6 +507,7 @@ export async function gatewayLogin(label) {
   const fd = openSync(logPath, "w");
   const child = spawn(cfg.cli, ["login", safe], {
     detached: true,
+    windowsHide: true,
     stdio: ["ignore", fd, fd],
     env: { ...process.env, CRISPY_COPILOT_DATA_DIR: cfg.dataDir },
   });
@@ -589,7 +592,7 @@ async function cliWithCfg(cfg, args, timeoutMs = 10_000) {
   return new Promise((resolve) => {
     execFile(
       cfg.cli, args,
-      { timeout: timeoutMs, maxBuffer: 1 << 20, env: { ...process.env, CRISPY_COPILOT_DATA_DIR: cfg.dataDir } },
+      { timeout: timeoutMs, maxBuffer: 1 << 20, windowsHide: true, env: { ...process.env, CRISPY_COPILOT_DATA_DIR: cfg.dataDir } },
       (err, stdout, stderr) => resolve({ ok: !err, stdout: String(stdout || ""), stderr: String(stderr || "") }),
     );
   });

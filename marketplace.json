@@ -22,7 +22,7 @@
     {
       "name": "token-speed",
       "source": "./token-speed",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "description": "Composer chip with the live output tokens-per-second (streaming rate while generating, last rate when idle, ttft and totals in the tooltip), plus subagent tracking: per-call rate in the parent session's chip and a side-pane Subagents view with live rates, totals and status. Independently activatable.",
       "category": "developer-tools",
       "tags": [
@@ -36,7 +36,7 @@
     {
       "name": "copilot-gateway",
       "source": "./copilot-gateway",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Runs the crispy-copilot-gateway (GitHub Copilot API gateway) locally for any harness: clones the gateway from GitHub into the plugin data dir and installs it (venv + pip) on first start; gateway_update keeps the git tree current. Isolated plugin-owned store; composer chip (up/latency, credits + accounts), side-pane view (accounts, device-flow login, proxy keys + pinning, credits metering, provider config) and MCP tools. Needs git + python>=3.12.",
       "category": "developer-tools",
       "tags": [

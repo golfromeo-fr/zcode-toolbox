@@ -222,10 +222,17 @@
         return new Promise((resolve, reject) => {
           const t0 = Date.now();
           (function probe() {
-            if (window.host) return resolve(window.host);
+            // bridge global is `zcode` on current builds, `host` on some others;
+            // duck-type on the extensions surface so we never bind the wrong object
+            for (const name of ["host", "zcode"]) {
+              const cand = window[name];
+              if (cand && typeof cand.ready === "function" && typeof cand.callTool === "function") {
+                return resolve({ bridge: cand, name });
+              }
+            }
             if (Date.now() - t0 > timeoutMs) {
               const globals = Object.keys(window).filter((k) => /host|bridge|zcode/i.test(k));
-              return reject(new Error(`host bridge unavailable after 15s (window.host missing; globals matching host/bridge/zcode: ${globals.join(", ") || "none"})`));
+              return reject(new Error(`no bridge with ready()+callTool() after 15s (checked window.host, window.zcode; globals: ${globals.join(", ") || "none"})`));
             }
             setTimeout(probe, 50);
           })();
@@ -239,9 +246,9 @@
         $("empty").textContent = "View cannot start: " + msg;
       }
       waitForHost()
-        .then((h) => {
-          window.host = h;
-          h.subscribe(() => {});
+        .then(({ bridge }) => {
+          window.host = bridge;
+          bridge.subscribe(() => {});
           h.onResourceUpdated((uri) => { if (uri === stateUri) void refresh(); });
           return h.ready();
         })

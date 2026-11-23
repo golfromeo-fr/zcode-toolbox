@@ -128,21 +128,54 @@
       }
 
       let stateUri = null;
-      host.subscribe(() => {});
-      host.onResourceUpdated((uri) => { if (uri === stateUri) void refresh(); });
-      host.ready().then(async () => {
-        applyHostStyles();
-        for (const el of document.querySelectorAll("[data-i18n]")) {
-          const v = t[el.dataset.i18n];
-          if (typeof v === "string") el.textContent = v;
-        }
-        try {
-          const resources = await host.listResources();
-          stateUri = resources.resources.find((r) => r.uri.endsWith("/state"))?.uri ?? null;
-          if (stateUri) await host.subscribeResource(stateUri);
-        } catch (e) { window.onerror(String(e)); }
-        await refresh();
-      });
+      // bridge global is `zcode` on current builds, `host` on some others; wait for
+      // injection and duck-type on the extensions surface (ready + callTool)
+      function waitForHost(timeoutMs = 15000) {
+        return new Promise((resolve, reject) => {
+          const t0 = Date.now();
+          (function probe() {
+            for (const name of ["host", "zcode"]) {
+              const cand = window[name];
+              if (cand && typeof cand.ready === "function" && typeof cand.callTool === "function") {
+                return resolve(cand);
+              }
+            }
+            if (Date.now() - t0 > timeoutMs) {
+              const globals = Object.keys(window).filter((k) => /host|bridge|zcode/i.test(k));
+              return reject(new Error(`no bridge with ready()+callTool() after 15s (checked window.host, window.zcode; globals: ${globals.join(", ") || "none"})`));
+            }
+            setTimeout(probe, 50);
+          })();
+        });
+      }
+      function fatal(msg) {
+        const box = $("errors");
+        box.style.display = "block";
+        box.textContent += `${msg}\n`;
+        $("empty").hidden = false;
+        $("empty").textContent = "View cannot start: " + msg;
+      }
+      waitForHost()
+        .then((bridge) => {
+          window.host = bridge;
+          bridge.subscribe(() => {});
+          bridge.onResourceUpdated((uri) => { if (uri === stateUri) void refresh(); });
+          return bridge.ready();
+        })
+        .then(async () => {
+          applyHostStyles();
+          for (const el of document.querySelectorAll("[data-i18n]")) {
+            const v = t[el.dataset.i18n];
+            if (typeof v === "string") el.textContent = v;
+          }
+          try {
+            const resources = await host.listResources();
+            stateUri = resources.resources.find((r) => r.uri.endsWith("/state"))?.uri ?? null;
+            if (stateUri) await host.subscribeResource(stateUri);
+          } catch (e) { window.onerror(String(e)); }
+          await refresh();
+        })
+        .catch((e) => fatal(String(e)));
       function applyHostStyles() {
         const variables = host.hostContext?.styles?.variables ?? {};
         for (const [name, value] of Object.entries(variables)) {

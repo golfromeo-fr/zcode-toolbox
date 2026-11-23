@@ -1,6 +1,6 @@
 {
   "name": "token-speed",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Composer chip with the live output tokens-per-second (streaming rate while generating, last rate when idle, ttft and totals in the tooltip), plus subagent tracking: per-call rate in the parent session's chip and a side-pane Subagents view with live rates, totals and status. Independently activatable.",
   "extension": {
     "engines": {

@@ -55,7 +55,7 @@
       <div class="card" id="card-login"><h2>Connect GitHub account</h2>
         <div class="row"><input id="login-label" placeholder="account name (e.g. work)" />
         <button id="btn-login" class="badge">login…</button></div>
-        <div class="meta" style="margin-top:4px">A one-time code appears below. The address never changes, so both can be typed by hand in any browser.</div>
+        <div class="meta" style="margin-top:4px">A one-time code and the address to enter it appear below as text, so both can be typed by hand in any browser.</div>
         <div id="login-flow" hidden>
           <div class="row"><span class="meta">address</span><input id="login-url" class="sel" readonly />
           <button id="btn-copy-url" class="badge">copy</button></div>
@@ -266,11 +266,14 @@
           openedInBrowser: openedInBrowser ?? loginFlow?.openedInBrowser,
         };
         $("login-flow").hidden = false;
-        $("login-url").value = p.url || "https://github.com/login/device";
+        // only the address GitHub sent with this code: never a guessed default
+        $("login-url").value = p.url || "";
         $("login-code").value = p.phase === "awaiting-authorization" ? (p.code ?? "") : "";
         const msg = LOGIN_MSG[p.phase];
         const text = typeof msg === "function" ? msg() : (msg ?? "");
-        $("login-msg").textContent = [text, p.phase === "failed" && p.logTail ? `Details: ${String(p.logTail).trim().slice(-300)}` : ""]
+        const noAddress = p.phase === "awaiting-authorization" && !p.url
+          ? "No address came back with this code: check the \"Open …\" line in the login log." : "";
+        $("login-msg").textContent = [text, noAddress, p.phase === "failed" && p.logTail ? `Details: ${String(p.logTail).trim().slice(-300)}` : ""]
           .filter(Boolean).join(" ");
       }
 

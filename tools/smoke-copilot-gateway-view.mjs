@@ -14,6 +14,8 @@ const html = readFileSync(new URL("../plugins/copilot-gateway/view.html", import
 const ids = [...html.matchAll(/\bid="([\w-]+)"/g)].map((m) => m[1]);
 assert.equal(new Set(ids).size, ids.length, `duplicate element ids: ${ids.filter((id, i) => ids.indexOf(id) !== i)}`);
 const script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+// the address is whatever GitHub returns with a code: the view must not carry a default
+assert.doesNotMatch(html, /github\.com\/login\/device/, "view hard-codes the device address");
 
 // ---- stubs ----
 const els = new Map();
@@ -198,6 +200,13 @@ await check("refresh keeps a pending code on display", async () => {
   assert.equal(el("login-code").value, "ABCD-1234");
   assert.equal(el("card-logins").hidden, false);
   assert.match(el("logins").innerHTML, /ABCD-1234/);
+});
+
+await check("refresh: no address returned with the code says so, no guess", async () => {
+  await refresh(base({ pendingLogins: [{ phase: "awaiting-authorization", label: "work", code: "ABCD-1234" }] }));
+  assert.equal(el("login-url").value, "");
+  assert.equal(el("login-code").value, "ABCD-1234");
+  assert.match(el("login-msg").textContent, /No address came back/);
 });
 
 await check("pending list: click the code to copy it", async () => {

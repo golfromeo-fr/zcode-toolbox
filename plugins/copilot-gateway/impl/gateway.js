@@ -610,7 +610,8 @@ export async function gatewayLogin(label) {
   await new Promise((r) => setTimeout(r, 3000));
   const state = await loginState(safe);
   if (state.code) {
-    state.openedInBrowser = await openInBrowser(state.url || "https://github.com/login/device");
+    // only the address GitHub sent with the code: never a guessed default
+    if (state.url) state.openedInBrowser = await openInBrowser(state.url);
   }
   return { ok: true, ...state };
 }

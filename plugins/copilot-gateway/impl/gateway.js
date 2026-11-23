@@ -79,19 +79,54 @@ function bearerHeaders(rawKey) {
   return rawKey ? { authorization: `Bearer ${rawKey}` } : {};
 }
 
+// Flatten one upstream catalog entry into the fields a harness config needs
+// (vision/reasoning flags, limits, per-M prices).
+export function flattenModel(m) {
+  const caps = m.capabilities ?? {};
+  const sup = caps.supports ?? {};
+  const lim = caps.limits ?? {};
+  const bp = ((m.billing ?? {}).token_prices ?? {});
+  const tier = bp[bp.preferred_tier] ?? bp.default ?? {};
+  const scale = (bp.batch_size ?? 1_000_000) / 1_000_000;
+  const vision = lim.vision ?? (sup.vision ? {} : null);
+  return {
+    id: m.id,
+    name: m.name ?? m.model_name ?? null,
+    vendor: m.vendor ?? null,
+    preview: !!m.preview,
+    enabled: ((m.policy ?? {}).state ?? "enabled") === "enabled",
+    endpoints: m.supported_endpoints ?? [],
+    vision: !!vision,
+    vision_max_images: vision?.max_prompt_images ?? null,
+    reasoning_effort: Array.isArray(sup.reasoning_effort) ? sup.reasoning_effort : (sup.reasoning_effort === true ? ["low","medium","high"] : null),
+    adaptive_thinking: sup.adaptive_thinking === true,
+    min_thinking_budget: sup.min_thinking_budget ?? null,
+    max_thinking_budget: sup.max_thinking_budget ?? null,
+    tool_calls: sup.tool_calls === true,
+    structured_outputs: sup.structured_outputs === true,
+    streaming: sup.streaming === true,
+    max_context_tokens: lim.max_context_window_tokens ?? null,
+    max_output_tokens: lim.max_output_tokens ?? null,
+    max_prompt_tokens: lim.max_prompt_tokens ?? null,
+    price_in_per_m: tier.input_price != null ? tier.input_price * scale : null,
+    price_out_per_m: tier.output_price != null ? tier.output_price * scale : null,
+  };
+}
+
 export async function fetchModels(rawKey) {
-  // /v1/models needs a raw ck_ key; returns {models:[ids]|null, error?}
+  // /v1/models needs a raw ck_ key; returns {models:[ids], models_full:[flat]|null, error?}
   const cfg = await loadCfg();
   try {
     const resp = await fetch(`${cfg.baseUrl}/v1/models`, {
       headers: bearerHeaders(rawKey),
       signal: AbortSignal.timeout(4000),
     });
-    if (!resp.ok) return { models: null, error: `HTTP ${resp.status}` };
+    if (!resp.ok) return { models: null, models_full: null, error: `HTTP ${resp.status}` };
     const body = await resp.json();
-    return { models: (body.data ?? []).map((m) => m.id) };
+    const entries = (body.data ?? []).filter((m) => typeof m?.id === "string");
+    return { models: entries.map((m) => m.id), models_full: entries.map((m) => flattenModel(m)) };
   } catch (e) {
-    return { models: null, error: String(e) };
+    return { models: null, models_full: null, error: String(e) };
   }
 }
 function stripToken(e) {
@@ -628,7 +663,7 @@ export async function gatewayUse(keyName = "zcode") {
     if (!created.ok) return { ok: false, ...created };
     raw = created.raw;
   }
-  const models = raw ? await fetchModels(raw) : { models: null };
+  const models = raw ? await fetchModels(raw) : { models: null, models_full: null };
   return {
     ok: true,
     keyName,
@@ -636,11 +671,14 @@ export async function gatewayUse(keyName = "zcode") {
     apiKey: raw ?? `<value of existing key '${keyName}'>`,
     note,
     models: models.models,
+    models_full: models.models_full ?? null,
     modelsError: models.error ?? null,
     provider: {
       baseUrl: `${cfg.baseUrl}/v1`,
       apiKey: raw ?? `<value of existing key '${keyName}'>`,
-      models: models.models,
+      // full catalog entries: vision / reasoning_effort / tool_calls / limits /
+      // per-M prices per model - enough for a harness to configure options
+      models: models.models_full ?? models.models,
     },
   };
 }

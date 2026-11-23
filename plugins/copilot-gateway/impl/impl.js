@@ -80,6 +80,16 @@ export async function activate(ctx) {
       inputSchema: { type: "object", properties: {} },
       run: () => gatewayStatus(),
     },
+    start: {
+      description: "Start the gateway (first run clones from GitHub + installs, ~20s)",
+      inputSchema: { type: "object", properties: {} },
+      run: () => gatewayStart(),
+    },
+    stop: {
+      description: "Stop the gateway service",
+      inputSchema: { type: "object", properties: {} },
+      run: () => gatewayStop(),
+    },
     login: {
       description: "Start GitHub device-flow login; returns one-time code + URL",
       inputSchema: { type: "object", properties: { label: { type: "string" } }, required: ["label"] },

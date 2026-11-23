@@ -36,6 +36,7 @@
       <span class="meta" id="meta"></span>
       <span class="spacer"></span>
       <span class="meta" id="updated"></span>
+      <button id="btn-start" class="badge">start</button>
     </header>
     <pre id="errors" style="display:none;color:#f87171;font-size:11px"></pre>
     <div id="empty" class="meta" hidden>Gateway not configured or unreachable.</div>
@@ -88,7 +89,21 @@
         $("meta").textContent = st.up
           ? `${st.baseUrl} · ${st.latencyMs ?? "?"}ms${gitc}`
           : `${st.baseUrl ?? ""} · down${gitc}`;
-        $("updated").textContent = `upd ${new Date().toLocaleTimeString()}`;
+        $("updated").textContent = `upd ${new Date().toLocaleTimeString()}${bridgeName ? ` · bridge ${bridgeName}` : ""}`;
+        const btn = $("btn-start");
+        btn.hidden = false;
+        btn.textContent = st.up ? "stop" : "start";
+        btn.disabled = false;
+        if (!st.up) {
+          $("empty").hidden = false;
+          $("empty").textContent = !st.venvOk
+            ? (st.git?.cloned
+                ? "Gateway cloned but not installed yet — press start."
+                : "Gateway not installed yet — press start (clones the gateway from GitHub, creates the venv, ~20s).")
+            : "Gateway installed but not responding — press start, or check serve.log in the plugin data dir.";
+        } else {
+          $("empty").hidden = true;
+        }
         renderAccounts(st);
         renderLogins(st);
         renderKeys(st);
@@ -195,6 +210,22 @@
         await refresh();
       });
 
+      $("btn-start").addEventListener("click", async () => {
+        const btn = $("btn-start");
+        btn.disabled = true;
+        btn.textContent = "working…";
+        const st0 = await callTool("status", {});
+        const out = st0?.up ? await callTool("stop", {}) : await callTool("start", {});
+        const box = $("use-out");
+        box.style.display = "block";
+        box.textContent = out?.ok
+          ? (out.up
+              ? `gateway up (${out.latencyMs ?? "?"}ms)${out.installed ? " · freshly installed" : ""}`
+              : "gateway stopped")
+          : `failed: ${out?.error ?? out?.hint ?? "unknown"}`;
+        await refresh();
+      });
+
       // delegated actions: copy code, pin select change + revoke buttons
       document.addEventListener("click", async (e) => {
         const el = e.target.closest(".copycode");
@@ -245,8 +276,10 @@
         $("empty").hidden = false;
         $("empty").textContent = "View cannot start: " + msg;
       }
+      let bridgeName = null;
       waitForHost()
-        .then(({ bridge }) => {
+        .then(({ bridge, name }) => {
+          bridgeName = name;
           window.host = bridge;
           bridge.subscribe(() => {});
           h.onResourceUpdated((uri) => { if (uri === stateUri) void refresh(); });

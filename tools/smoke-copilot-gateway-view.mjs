@@ -17,6 +17,14 @@ const script = html.match(/<script>([\s\S]*)<\/script>/)[1];
 // the address is whatever GitHub returns with a code: the view must not carry a default
 assert.doesNotMatch(html, /github\.com\/login\/device/, "view hard-codes the device address");
 
+// the manifest and the marketplace entry must advertise the same version
+{
+  const read = (rel) => JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf8"));
+  const manifest = read("../plugins/copilot-gateway/.zcode-plugin/plugin.json").version;
+  const entry = read("../marketplace.json").plugins.find((e) => e["name"] === "copilot-gateway").version;
+  assert.equal(entry, manifest, `marketplace entry ${entry} != manifest ${manifest}`);
+}
+
 // ---- stubs ----
 const els = new Map();
 const el = (id) => {

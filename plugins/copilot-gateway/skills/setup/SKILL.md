@@ -9,7 +9,7 @@ Control plane for the local **crispy-copilot-gateway** service (OpenAI/Anthropic
 
 ## 1. Preflight
 
-Platform requirements: git + python >= 3.12 on PATH. Windows: Git for Windows + python.org python (installer PATH option); the plugin handles the `Scripts\` venv layout and kills the service by pid, no pkill needed.
+Platform requirements: git + python >= 3.12 on PATH. Windows: Git for Windows + python.org python (installer PATH option); the plugin handles the `Scripts\` venv layout and kills the service by pid, no pkill needed. macOS: git ships with the Xcode CLT, but its python3 is older than 3.12 — install python via Homebrew (`brew install python`) or python.org; discovery then just works (venv bin/, `open` for the OAuth browser, pid-based stop).
 
 Run the `gateway_status` MCP tool first. Interpretation guide:
 

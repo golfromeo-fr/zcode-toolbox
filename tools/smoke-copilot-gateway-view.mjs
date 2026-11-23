@@ -35,6 +35,8 @@ const el = (id) => {
       addEventListener(type, fn) { this.handlers[type] = fn; },
       focus() { this.focused = true; },
       select() { this.selected = true; },
+      setAttribute(name, value) { this[name] = value; },
+      removeAttribute(name) { delete this[name]; },
     });
   }
   return els.get(id);
@@ -57,6 +59,7 @@ const bridge = {
   onResourceUpdated(fn) { bridge.updated = fn; },
   listResources: async () => ({ resources: [{ uri: "ui://copilot-gateway/state" }] }),
   subscribeResource: async () => {},
+  openExternal({ href }) { calls.push(["openExternal", href]); },
   callTool(name, args) {
     calls.push([name, args]);
     return Promise.resolve(tools[name] ? tools[name](args ?? {}) : undefined);
@@ -88,13 +91,18 @@ Object.assign(globalThis, {
 
 // ---- helpers ----
 const settle = () => new Promise((r) => setTimeout(r, 30));
+const clickEvent = () => ({ prevented: false, preventDefault() { this.prevented = true; }, target: { closest: () => null } });
 const click = async (id) => {
   assert.ok(el(id).handlers.click, `${id} has no click handler`);
-  await el(id).handlers.click({ target: { closest: () => null } });
+  const event = clickEvent();
+  await el(id).handlers.click(event);
   await settle();
+  return event;
 };
-const documentClick = async (target) => {
-  for (const fn of docHandlers.click ?? []) await fn({ target: { closest: (sel) => (sel === ".copycode" ? target : null) } });
+const documentClick = async (selector, target) => {
+  for (const fn of docHandlers.click ?? []) {
+    await fn({ ...clickEvent(), target: { closest: (sel) => (sel === selector ? target : null) } });
+  }
   await settle();
 };
 const refresh = async (st) => {
@@ -157,7 +165,8 @@ await check("login: address and code shown as text when no browser opened", asyn
   await click("btn-login");
   assert.deepEqual(calls.find((c) => c[0] === "login"), ["login", { label: "work" }]);
   assert.equal(el("login-flow").hidden, false);
-  assert.equal(el("login-url").value, "https://github.com/login/device");
+  assert.equal(el("login-link").textContent, "https://github.com/login/device");
+  assert.equal(el("login-link").href, "https://github.com/login/device");
   assert.equal(el("login-code").value, "ABCD-1234");
   assert.match(el("login-msg").textContent, /No browser could be opened from here\. Type the link above/);
   assert.equal(el("btn-login").textContent, "login…");
@@ -168,7 +177,7 @@ await check("login: message when a browser did open", async () => {
   tools.login = () => login({ code: "WXYZ-5678", openedInBrowser: true });
   await click("btn-login");
   // an opener can exit cleanly without anything appearing: the link stays the fallback
-  assert.match(el("login-msg").textContent, /asked to open on this machine\. If none appeared, type the link above/);
+  assert.match(el("login-msg").textContent, /asked to open on this machine\. If none appeared, click the link above/);
   assert.equal(el("login-code").value, "WXYZ-5678");
 });
 
@@ -177,6 +186,28 @@ await check("login: a failure from the tool is reported", async () => {
   await click("btn-login");
   assert.equal(el("login-code").value, "");
   assert.match(el("login-msg").textContent, /Login failed: no python/);
+});
+
+await check("login: clicking the link asks the app to open it", async () => {
+  tools.login = () => login({ code:"LINK-0001", openedInBrowser: false });
+  await click("btn-login");
+  const n = calls.length;
+  const event = await click("login-link");
+  assert.deepEqual(calls.slice(n), [["openExternal", "https://github.com/login/device"]]);
+  assert.equal(event.prevented, true, "the blocked plain navigation must be cancelled");
+  assert.match(el("login-msg").textContent, /Asked ZCode to open the link in this machine's browser\. If nothing appeared, type the link/);
+});
+
+await check("login: without the app call the link is left as a plain link", async () => {
+  const open = bridge.openExternal;
+  delete bridge.openExternal;
+  try {
+    const n = calls.length;
+    assert.equal((await click("login-link")).prevented, false);
+    assert.deepEqual(calls.slice(n), []);
+  } finally {
+    bridge.openExternal = open;
+  }
 });
 
 await check("copy: no clipboard at all says so and selects the code", async () => {
@@ -213,14 +244,23 @@ await check("refresh keeps a pending code on display", async () => {
 
 await check("refresh: no address returned with the code says so, no guess", async () => {
   await refresh(base({ pendingLogins: [{ phase: "awaiting-authorization", label: "work", code: "ABCD-1234" }] }));
-  assert.equal(el("login-url").value, "");
+  assert.equal(el("login-link").textContent, "(no link came back with this code)");
+  assert.equal(el("login-link").href, undefined);
   assert.equal(el("login-code").value, "ABCD-1234");
   assert.match(el("login-msg").textContent, /No link came back/);
 });
 
+await check("pending list: the link is back and opens the same way", async () => {
+  await refresh(base({ pendingLogins: pending("awaiting-authorization", { code: "ABCD-1234" }) }));
+  assert.match(el("logins").innerHTML, /<a class="badge openlink" href="https:\/\/github\.com\/login\/device"/);
+  const n = calls.length;
+  await documentClick("a.openlink", { dataset: { url: "https://github.com/login/device" } });
+  assert.deepEqual(calls.slice(n), [["openExternal", "https://github.com/login/device"]]);
+});
+
 await check("pending list: click the code to copy it", async () => {
   const codeEl = { dataset: { code: "ABCD-1234" }, textContent: "ABCD-1234" };
-  await documentClick(codeEl);
+  await documentClick(".copycode", codeEl);
   assert.equal(copied, "ABCD-1234");
   assert.equal(codeEl.textContent, "copied");
 });

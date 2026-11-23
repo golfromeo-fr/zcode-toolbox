@@ -25,6 +25,10 @@
       }
       .copycode { cursor: pointer; }
       .sel { font-family: ui-monospace, Menlo, Consolas, monospace; cursor: text; }
+      .link {
+        flex: 1; min-width: 0; overflow-wrap: anywhere; color: inherit;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+      }
       #use-wrap {
         max-height: 45vh; overflow: auto; margin-top: 4px;
         border: 1px solid rgba(127,127,127,0.35); border-radius: 4px;
@@ -55,9 +59,9 @@
       <div class="card" id="card-login"><h2>Connect GitHub account</h2>
         <div class="row"><input id="login-label" placeholder="account name (e.g. work)" />
         <button id="btn-login" class="badge">login…</button></div>
-        <div class="meta" style="margin-top:4px">After login… the one-time code and the link to enter it appear below as text, to type by hand in any browser if none opens here.</div>
+        <div class="meta" style="margin-top:4px">After login… the one-time code and the link to enter it appear below. Click the link to open it in this machine's browser, or type it in any browser if none opens here.</div>
         <div id="login-flow" hidden>
-          <div class="row"><span class="meta">link</span><input id="login-url" class="sel" readonly />
+          <div class="row"><span class="meta">link</span><a id="login-link" class="link"></a>
           <button id="btn-copy-url" class="badge">copy</button></div>
           <div class="row"><span class="meta">code</span><input id="login-code" class="sel" readonly />
           <button id="btn-copy-code" class="badge">copy</button></div>
@@ -160,7 +164,9 @@
           const right = p.phase === "awaiting-authorization"
             ? `<span class="meta">code <b class="copycode" data-code="${esc(p.code ?? "")}">${esc(p.code ?? "…")}</b></span>`
             : `<span class="meta">${esc(ROW_TEXT[p.phase] ?? p.phase)}</span>`;
-          return `<div class="row"><span class="grow">${esc(p.label)}</span>${right}</div>`;
+          const link = p.phase === "awaiting-authorization" && p.url
+            ? `<a class="badge openlink" href="${esc(p.url)}" data-url="${esc(p.url)}">${esc(p.url)}</a>` : "";
+          return `<div class="row"><span class="grow">${esc(p.label)}</span>${right}${link}</div>`;
         }).join("");
       }
       function renderKeys(st) {
@@ -245,15 +251,29 @@
       function selectAll(el) {
         try { el.focus(); el.select(); } catch { }
       }
+      // A plain link cannot leave a plugin view: the app blocks that navigation.
+      // So a click asks the app to open the URL, which it does in the system
+      // browser. That call never reports failure, so the message says what was
+      // asked and keeps "type it" as the fallback. Where the app has no such
+      // call, the link is left to behave as a plain link did.
+      async function openLink(url, event) {
+        const h = window.host;
+        if (!url || !h || typeof h.openExternal !== "function") return false;
+        event?.preventDefault?.();
+        try { await h.openExternal({ href: url }); } catch { }
+        $("login-msg").textContent = "Asked ZCode to open the link in this machine's browser. If nothing appeared, type the link in any browser (this machine, your phone, another computer — anywhere you are signed in to GitHub), then enter the code.";
+        return true;
+      }
 
       // ---- login block ----
       // The browser is not always on this machine (VMs, remote desktops) and
       // the clipboard is not always shared, so the address and the code are
       // shown as plain text to type by hand; copy is only a convenience.
       let loginFlow = null; // { label, openedInBrowser } of the attempt on display
+      let loginUrl = ""; // the link GitHub sent with the code on display
       const LOGIN_MSG = {
         "awaiting-authorization": () => loginFlow?.openedInBrowser === true
-          ? "A browser page was asked to open on this machine. If none appeared, type the link above in any browser (this machine, your phone, another computer — anywhere you are signed in to GitHub), then enter the code."
+          ? "A browser page was asked to open on this machine. If none appeared, click the link above, or type it in any browser (this machine, your phone, another computer — anywhere you are signed in to GitHub), then enter the code."
           : "No browser could be opened from here. Type the link above in any browser (this machine, your phone, another computer — anywhere you are signed in to GitHub), then enter the code.",
         starting: "Waiting for GitHub to issue a code… If this persists, this machine may not be able to reach github.com.",
         failed: "Login failed — press login… to try again.",
@@ -266,8 +286,11 @@
           openedInBrowser: openedInBrowser ?? loginFlow?.openedInBrowser,
         };
         $("login-flow").hidden = false;
-        // only the address GitHub sent with this code: never a guessed default
-        $("login-url").value = p.url || "";
+        // only the link GitHub sent with this code: never a guessed default
+        loginUrl = p.url || "";
+        const a = $("login-link");
+        a.textContent = loginUrl || "(no link came back with this code)";
+        if (loginUrl) a.setAttribute("href", loginUrl); else a.removeAttribute("href");
         $("login-code").value = p.phase === "awaiting-authorization" ? (p.code ?? "") : "";
         const msg = LOGIN_MSG[p.phase];
         const text = typeof msg === "function" ? msg() : (msg ?? "");
@@ -329,14 +352,20 @@
         }
         await refresh();
       });
-      for (const [btnId, fieldId] of [["btn-copy-url", "login-url"], ["btn-copy-code", "login-code"]]) {
-        $(btnId).addEventListener("click", async () => {
-          const ok = await copyText($(fieldId).value);
-          flash($(btnId), ok ? "copied" : "not copied — type it");
-          if (!ok) selectAll($(fieldId));
-        });
-        $(fieldId).addEventListener("click", () => selectAll($(fieldId)));
-      }
+      $("btn-copy-url").addEventListener("click", async () => {
+        flash($("btn-copy-url"), (await copyText(loginUrl)) ? "copied" : "not copied — type it");
+      });
+      $("btn-copy-code").addEventListener("click", async () => {
+        const ok = await copyText($("login-code").value);
+        flash($("btn-copy-code"), ok ? "copied" : "not copied — type it");
+        if (!ok) selectAll($("login-code"));
+      });
+      $("login-code").addEventListener("click", () => selectAll($("login-code")));
+      $("login-link").addEventListener("click", (e) => void openLink(loginUrl, e));
+      document.addEventListener("click", (e) => {
+        const a = e.target.closest("a.openlink");
+        if (a) void openLink(a.dataset.url, e);
+      });
 
       $("btn-start").addEventListener("click", async () => {
         const btn = $("btn-start");

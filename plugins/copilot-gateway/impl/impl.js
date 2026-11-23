@@ -5,7 +5,7 @@
 // ctx.workbench.visibleSessions() each tick.
 import {
   gatewayStatus, gatewayStart, gatewayStop, gatewayUpdate, gatewayLogin, loginState,
-  keysMeta, keyCreate, keyRevoke, keySetPin, gatewayUse,
+  keysMeta, keyCreate, keyRevoke, keySetPin, gatewayUse, gatewayConfig,
 } from "./gateway.js";
 
 const POLL_MS = 5000;
@@ -115,8 +115,13 @@ export async function activate(ctx) {
       inputSchema: { type: "object", properties: { name: { type: "string" }, label: { type: "string" } } },
       run: (a) => keySetPin(String(a?.name ?? ""), a?.label ? String(a.label) : null),
     },
+    config: {
+      description: "Regenerate provider config for an existing key (placeholder apiKey)",
+      inputSchema: { type: "object", properties: { keyName: { type: "string" } } },
+      run: (a) => gatewayConfig(a?.keyName ? String(a.keyName) : "zcode"),
+    },
     use: {
-      description: "Find-or-create key + provider config (baseUrl, raw key, models)",
+      description: "New key + its provider config (raw key shown once)",
       inputSchema: { type: "object", properties: { keyName: { type: "string" } } },
       run: (a) => gatewayUse(a?.keyName ? String(a.keyName) : "zcode"),
     },

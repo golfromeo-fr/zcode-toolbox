@@ -53,10 +53,12 @@
         <div class="row"><span class="grow">Total</span><span id="usage-totals" class="meta"></span></div>
         <table id="usage-recent"></table>
       </div>
-      <div class="card" id="card-use"><h2>Connect a harness</h2>
-        <div class="row"><span class="grow meta">Find-or-create a proxy key and print provider config</span>
-        <button id="btn-copy-use" class="badge" style="display:none">copy</button>
-        <button id="btn-use" class="badge">connect…</button></div>
+      <div class="card" id="card-use"><h2>Harness config</h2>
+        <div class="row"><span class="grow meta">Regenerate provider config (reuses your saved key)</span>
+        <button id="btn-copy-config" class="badge" style="display:none">copy</button>
+        <button id="btn-config" class="badge">config…</button></div>
+        <div class="row"><span class="grow meta">Create a new key (raw value shown once) + its config</span>
+        <button id="btn-newkey" class="badge">new key…</button></div>
         <div class="row"><span class="grow meta">Update the gateway git tree (fetch, reset, reinstall, restart)</span>
         <button id="btn-update" class="badge">update…</button></div>
         <pre id="use-out" style="display:none;font-size:11px;white-space:pre-wrap"></pre>
@@ -175,8 +177,7 @@
         }
       }
 
-      $("btn-use").addEventListener("click", async () => {
-        const out = await callTool("use", {});
+      function showConfig(out) {
         const box = $("use-out");
         box.style.display = "block";
         box.textContent = out?.ok
@@ -188,9 +189,16 @@
               out.note ?? "",
             ].join("\n")
           : `failed: ${out?.error ?? "unknown"}`;
-        $("btn-copy-use").style.display = out?.ok ? "" : "none";
+        $("btn-copy-config").style.display = out?.ok ? "" : "none";
+      }
+      $("btn-config").addEventListener("click", async () => {
+        showConfig(await callTool("config", {}));
       });
-      $("btn-copy-use").addEventListener("click", async () => {
+      $("btn-newkey").addEventListener("click", async () => {
+        const name = (prompt("Key name:", "zcode") ?? "").trim() || "zcode";
+        showConfig(await callTool("use", { keyName: name }));
+      });
+      $("btn-copy-config").addEventListener("click", async () => {
         try { await navigator.clipboard.writeText($("use-out").textContent); } catch { }
       });
 

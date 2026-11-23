@@ -23,12 +23,45 @@ const START_TIMEOUT_MS = 20_000;
 const USAGE_CACHE_MS = 10_000;
 
 // CRISPY_GATEWAY_* env (userConfig via manifest) > gateway .env > defaults.
+// One-time migration: stores created before 0.2.0 lived inside the plugin dir
+// (ZCODE_PLUGIN_DATA/store or ~/.zcode/plugins/copilot-gateway/store) and were
+// wiped by plugin updates. Copy them to the durable runtime dir.
+let storeMigrated = false;
+function migrateLegacyStore(dataDir) {
+  if (storeMigrated) return;
+  storeMigrated = true;
+  try {
+    if (existsSync(join(dataDir, "connections.json"))) return;
+    const home = homedir();
+    const candidates = [
+      process.env.ZCODE_PLUGIN_DATA ? join(process.env.ZCODE_PLUGIN_DATA, "store") : null,
+      join(home, ".zcode", "plugins", "copilot-gateway", "store"),
+    ].filter(Boolean);
+    for (const legacy of candidates) {
+      if (!existsSync(join(legacy, "connections.json"))) continue;
+      mkdirSync(dataDir, { recursive: true });
+      for (const f of ["connections.json", "active.json", "api-keys.json", "usage.db", "storage_secret.txt"]) {
+        try {
+          if (existsSync(join(legacy, f))) copyFileSync(join(legacy, f), join(dataDir, f));
+        } catch { /* keep going; partial migration beats none */ }
+      }
+      try {
+        writeFileSync(join(dataDir, "migrated-from.txt"), `${legacy}\n`, { mode: 0o600 });
+      } catch { }
+      return;
+    }
+  } catch { /* never let migration break loadCfg */ }
+}
+
 let cfgCache = null;
 let cfgCacheAt = 0;
 async function loadCfg() {
   if (cfgCache && Date.now() - cfgCacheAt < 3000) return cfgCache;
-  const runtimeDir = process.env.ZCODE_PLUGIN_DATA
-    || join(homedir(), ".zcode", "plugins", "copilot-gateway");
+  // Outside the plugin dir ON PURPOSE: plugin updates replace the plugin dir,
+  // which must never wipe the store/install (that bug silently destroyed the
+  // OAuth account on every redeploy before 0.2.0).
+  const runtimeDir = process.env.CRISPY_GATEWAY_RUNTIME_DIR
+    || join(homedir(), ".zcode", "plugin-data", "copilot-gateway");
   let path = process.env.CRISPY_GATEWAY_PATH || join(runtimeDir, "gateway");
   let host = process.env.CRISPY_GATEWAY_HOST || "";
   let port = process.env.CRISPY_GATEWAY_PORT || "";
@@ -59,6 +92,7 @@ async function loadCfg() {
   cfg.baseUrl = `http://${cfg.host}:${cfg.port}`;
   cfg.serveLog = join(runtimeDir, "serve.log");
   cfg.installLog = join(runtimeDir, "install.log");
+  migrateLegacyStore(cfg.dataDir);
   cfgCache = cfg;
   cfgCacheAt = Date.now();
   return cfg;
@@ -252,8 +286,11 @@ function runStep(cmd, args, timeoutMs) {
 let emptyGitCfgPath = null;
 function emptyGitConfig() {
   if (emptyGitCfgPath) return emptyGitCfgPath;
-  const runtimeDir = process.env.ZCODE_PLUGIN_DATA
-    || join(homedir(), ".zcode", "plugins", "copilot-gateway");
+  // Outside the plugin dir ON PURPOSE: plugin updates replace the plugin dir,
+  // which must never wipe the store/install (that bug silently destroyed the
+  // OAuth account on every redeploy before 0.2.0).
+  const runtimeDir = process.env.CRISPY_GATEWAY_RUNTIME_DIR
+    || join(homedir(), ".zcode", "plugin-data", "copilot-gateway");
   emptyGitCfgPath = join(runtimeDir, "gitconfig-empty");
   try {
     mkdirSync(runtimeDir, { recursive: true });
@@ -512,9 +549,9 @@ export async function gatewayStop() {
   const h = await healthz();
   return { ok: !h.up, via: "pkill", ...h };
 }
-import { openSync, closeSync, readFileSync, existsSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { openSync, closeSync, readFileSync, existsSync, rmSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
 
-const DATA_DIR = process.env.ZCODE_PLUGIN_DATA || join(homedir(), ".zcode", "plugins", "copilot-gateway");
+const DATA_DIR = process.env.CRISPY_GATEWAY_RUNTIME_DIR || join(homedir(), ".zcode", "plugin-data", "copilot-gateway");
 
 // Open the system default browser: the device flow needs the USER's browser
 // session (their GitHub login), and plugin views cannot reliably open links.
@@ -648,42 +685,32 @@ export async function keyRevoke(name) {
   const r = await cliWithCfg(cfg, ["revoke", name]);
   return { ok: r.ok, revoked: /revoked/.test(r.stdout), name };
 }
-export async function gatewayUse(keyName = "zcode") {
-  // Find or create a proxy key, then compose everything needed to wire ZCode
-  // (or any OpenAI/Anthropic-speaking harness) to the gateway.
+// Regenerate the provider config for an EXISTING key. The saved raw value is
+// unrecoverable (hashes only), so the catalog is read via a throwaway key
+// (create -> fetch -> revoke; stale temp keys from crashed runs cleaned first).
+export async function gatewayConfig(keyName = "zcode") {
   const cfg = await loadCfg();
   const keys = await keysMeta();
-  const existing = keys.find((k) => k.name === keyName);
-  let raw = null;
-  let note = null;
-  let rawIsTemp = false;
-  let tempName = null;
-  if (existing) {
-    // The saved key's raw value is unrecoverable (hashes only), but the config
-    // must still be complete: borrow a throwaway key to read the catalog,
-    // then revoke it immediately.
-    note = `reusing existing key '${keyName}' (raw value not recoverable - paste your saved one); catalog read via a temporary key, revoked right after`;
-    tempName = `${keyName}-catalog-tmp`;
-    let made = await keyCreate(tempName);
-    if (!made.ok && /already exists/.test(made.error ?? "")) {
-      await keyRevoke(tempName); // stale temp key from an earlier crashed run
-      made = await keyCreate(tempName);
-    }
-    if (made.ok) { raw = made.raw; rawIsTemp = true; }
-  } else {
-    const created = await keyCreate(keyName);
-    if (!created.ok) return { ok: false, ...created };
-    raw = created.raw;
+  if (!keys.some((k) => k.name === keyName)) {
+    return { ok: false, error: `no key '${keyName}' yet - create one first (new key… / gateway_key_create)` };
   }
-  const models = raw ? await fetchModels(raw) : { models: null, models_full: null };
-  if (rawIsTemp) await keyRevoke(tempName ?? "");
-  const apiKeyOut = raw && !rawIsTemp ? raw : `<value of existing key '${keyName}'>`;
+  const tempName = `${keyName}-catalog-tmp`;
+  let made = await keyCreate(tempName);
+  if (!made.ok && /already exists/.test(made.error ?? "")) {
+    await keyRevoke(tempName);
+    made = await keyCreate(tempName);
+  }
+  if (!made.ok) return { ok: false, error: `temporary catalog key failed: ${made.error}` };
+  const models = await fetchModels(made.raw);
+  await keyRevoke(tempName);
+  const apiKeyOut = `<value of existing key '${keyName}'>`;
+  const note = `config for existing key '${keyName}' (paste your saved key value); catalog read via a temporary key, revoked right after`;
   return {
     ok: true,
     keyName,
     baseUrl: cfg.baseUrl,
     apiKey: apiKeyOut,
-    note: rawIsTemp && !models.models_full ? (note + ` (catalog fetch failed: ${models.error ?? "unknown"})`) : note,
+    note: models.models_full ? note : note + ` (catalog fetch failed: ${models.error ?? "unknown"} - is an account connected?)`,
     models: models.models,
     models_full: models.models_full ?? null,
     modelsError: models.error ?? null,
@@ -692,6 +719,34 @@ export async function gatewayUse(keyName = "zcode") {
       apiKey: apiKeyOut,
       // full catalog entries: vision / reasoning_effort / tool_calls / limits /
       // per-M prices per model - enough for a harness to configure options
+      models: models.models_full ?? models.models,
+    },
+  };
+}
+
+// Find-or-create a key, then compose everything needed to wire a harness.
+// First-time path returns the raw key (shown once); an existing key delegates
+// to gatewayConfig.
+export async function gatewayUse(keyName = "zcode") {
+  const cfg = await loadCfg();
+  const keys = await keysMeta();
+  if (keys.some((k) => k.name === keyName)) return gatewayConfig(keyName);
+  const created = await keyCreate(keyName);
+  if (!created.ok) return { ok: false, ...created };
+  const raw = created.raw;
+  const models = await fetchModels(raw);
+  return {
+    ok: true,
+    keyName,
+    baseUrl: cfg.baseUrl,
+    apiKey: raw,
+    note: `new key '${keyName}' created - its raw value is shown ONCE, save it; config below`,
+    models: models.models,
+    models_full: models.models_full ?? null,
+    modelsError: models.error ?? null,
+    provider: {
+      baseUrl: `${cfg.baseUrl}/v1`,
+      apiKey: raw,
       models: models.models_full ?? models.models,
     },
   };

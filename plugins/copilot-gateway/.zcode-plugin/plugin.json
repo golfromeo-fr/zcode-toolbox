@@ -1,6 +1,6 @@
 {
   "name": "copilot-gateway",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "Wrapper that runs the crispy-copilot-gateway (GitHub Copilot API gateway) locally: on first start it clones the gateway from GitHub into the plugin data dir and installs it (venv + pip; needs git, python>=3.12, one-time network), then serves it on 127.0.0.1:8812 with its own isolated data store. gateway_update pulls the git tree like a manual install would. Composer chip (up/latency, credits + accounts tooltip), side-pane view (accounts, device-flow login, proxy keys + pinning, credits metering, provider config). Fresh machines redo OAuth once.",
   "author": {
     "name": "golfromeo"
@@ -71,7 +71,6 @@
         "CRISPY_GATEWAY_PATH": "${user_config.gateway_path}",
         "CRISPY_GATEWAY_HOST": "${user_config.host}",
         "CRISPY_GATEWAY_PORT": "${user_config.port}",
-        "ZCODE_PLUGIN_DATA": "${ZCODE_PLUGIN_DATA}",
         "CRISPY_GATEWAY_REPO": "${user_config.gateway_repo}",
         "CRISPY_GATEWAY_GIT": "${user_config.git_path}"
       }

@@ -3,7 +3,7 @@
 // control plane as MCP tools over stdio (zero-dep, line-delimited JSON-RPC
 // 2.0). Launched from the plugin manifest's mcpServers entry.
 import { gatewayStatus, gatewayStart, gatewayStop, gatewayUpdate, gatewayLogin, loginState,
-         keysMeta, keyCreate, keyRevoke, keySetPin, gatewayUse, usageData,
+         keysMeta, keyCreate, keyRevoke, keySetPin, gatewayUse, gatewayConfig, usageData,
          connections, listPendingLogins } from "./gateway.js";
 
 const VERSION = "0.1.0";
@@ -149,8 +149,13 @@ const TOOLS = {
     inputSchema: obj({ name: s("Key name"), label: s("Connection label, or omit to unpin") }),
     run: (a) => keySetPin(String(a.name ?? ""), a.label ? String(a.label) : null),
   },
+  gateway_config: {
+    description: "Regenerate the provider config for an EXISTING key (default 'zcode'): baseUrl + full capability-rich model list; apiKey comes back as a placeholder (paste your saved value). Use when the harness is already connected.",
+    inputSchema: obj({ keyName: s("Existing proxy key name (default zcode)") }),
+    run: (a) => gatewayConfig(a.keyName ? String(a.keyName) : "zcode"),
+  },
   gateway_use: {
-    description: "Wire a harness to the gateway: finds/creates proxy key <keyName> (default 'zcode') and returns baseUrl + raw key + model ids for provider config. Raw key shown only here — save it.",
+    description: "First-time wiring: creates proxy key <keyName> (default 'zcode') and returns baseUrl + raw key (shown ONCE) + full model list for provider config. Errors when the name exists - use gateway_config then.",
     inputSchema: obj({ keyName: s("Proxy key name to find or create (default zcode)") }),
     run: (a) => gatewayUse(a.keyName ? String(a.keyName) : "zcode"),
   },

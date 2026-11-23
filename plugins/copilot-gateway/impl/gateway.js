@@ -6,7 +6,7 @@
 import { readFile, writeFile, rename, chmod, appendFile, mkdir } from "node:fs/promises";
 import { spawn, execFile } from "node:child_process";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, devNull } from "node:os";
 
 const APP_NAME = "crispy-copilot-gateway";
 const IS_WIN = process.platform === "win32";
@@ -215,7 +215,7 @@ function gitAnon(args, timeoutMs) {
     execFile("git", ["-c", "credential.helper=", ...args], {
       timeout: timeoutMs,
       maxBuffer: 1 << 22,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" },
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_SYSTEM: devNull },
     }, (err, stdout, stderr) =>
       resolve({ ok: !err, stdout: String(stdout || ""), stderr: String(stderr || "") }));
   });

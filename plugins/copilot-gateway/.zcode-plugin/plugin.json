@@ -1,0 +1,101 @@
+{
+  "name": "copilot-gateway",
+  "version": "0.1.0",
+  "description": "Wrapper that runs the crispy-copilot-gateway (GitHub Copilot API gateway) locally: on first start it clones the gateway from GitHub into the plugin data dir and installs it (venv + pip; needs git, python>=3.12, one-time network), then serves it on 127.0.0.1:8812 with its own isolated data store. gateway_update pulls the git tree like a manual install would. Composer chip (up/latency, credits + accounts tooltip), side-pane view (accounts, device-flow login, proxy keys + pinning, credits metering, provider config). Fresh machines redo OAuth once.",
+  "author": {
+    "name": "golfromeo"
+  },
+  "keywords": [
+    "copilot",
+    "gateway",
+    "github",
+    "proxy",
+    "credits",
+    "mcp"
+  ],
+  "extension": {
+    "engines": {
+      "zcode": "^1.0.0"
+    },
+    "main": "./loader.js",
+    "activationEvents": [
+      "onAvailable"
+    ],
+    "contributes": {
+      "commands": [
+        {
+          "id": "open",
+          "title": {
+            "zh-CN": "Copilot 网关",
+            "en-US": "Copilot gateway"
+          }
+        }
+      ],
+      "views": [
+        {
+          "id": "gateway",
+          "title": {
+            "zh-CN": "Copilot 网关",
+            "en-US": "Copilot gateway"
+          },
+          "icon": "server"
+        }
+      ]
+    }
+  },
+  "slots": {
+    "composer.status": [
+      {
+        "id": "gateway",
+        "target": {
+          "command": "open"
+        }
+      }
+    ],
+    "sidePane.launcher": [
+      {
+        "id": "open-view",
+        "target": {
+          "view": "gateway"
+        }
+      }
+    ]
+  },
+  "mcpServers": {
+    "gateway": {
+      "command": "node",
+      "args": [
+        "${ZCODE_PLUGIN_ROOT}/impl/mcp.js"
+      ],
+      "env": {
+        "CRISPY_GATEWAY_PATH": "${user_config.gateway_path}",
+        "CRISPY_GATEWAY_HOST": "${user_config.host}",
+        "CRISPY_GATEWAY_PORT": "${user_config.port}",
+        "ZCODE_PLUGIN_DATA": "${ZCODE_PLUGIN_DATA}",
+        "CRISPY_GATEWAY_REPO": "${user_config.gateway_repo}"
+      }
+    }
+  },
+  "userConfig": {
+    "gateway_path": {
+      "type": "string",
+      "default": "",
+      "description": "Advanced: use an existing crispy-copilot-gateway checkout instead of the embedded install (empty = embedded)"
+    },
+    "host": {
+      "type": "string",
+      "default": "127.0.0.1",
+      "description": "Gateway host"
+    },
+    "port": {
+      "type": "string",
+      "default": "8812",
+      "description": "Gateway port"
+    },
+    "gateway_repo": {
+      "type": "string",
+      "default": "https://github.com/golfromeo-fr/crispy-copilot-gateway",
+      "description": "Git repo the plugin clones the gateway from"
+    }
+  }
+}

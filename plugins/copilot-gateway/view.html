@@ -1,0 +1,242 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        margin: 0; font: 12px/1.5 var(--z-code-font, sans-serif); color: var(--fg, #ccc);
+        background: var(--bg, transparent); padding: 8px 10px;
+      }
+      header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+      h1 { font-size: 13px; margin: 0; font-weight: 600; }
+      .meta { font-size: 11px; opacity: 0.65; }
+      .spacer { flex: 1; }
+      .dot { width: 8px; height: 8px; border-radius: 999px; flex: none; }
+      .dot.up { background: #34d399; }
+      .dot.down { background: #f87171; }
+      .card { border: 1px solid rgba(127,127,127,0.35); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
+      .card h2 { font-size: 11px; margin: 0 0 6px; font-weight: 600; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.04em; }
+      .row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12px; }
+      .row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; border: 1px solid rgba(127,127,127,0.4); opacity: 0.85; }
+      input {
+        background: transparent; border: 1px solid rgba(127,127,127,0.4); border-radius: 4px;
+        color: inherit; font: inherit; padding: 2px 6px; min-width: 0; flex: 1;
+      }
+      .copycode { cursor: pointer; }
+      table { width: 100%; border-collapse: collapse; font-size: 11px; }
+      th { text-align: left; opacity: 0.55; font-weight: 500; padding: 1px 6px 1px 0; }
+      td { padding: 1px 6px 1px 0; white-space: nowrap; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Copilot gateway</h1>
+      <span class="dot down" id="dot"></span>
+      <span class="meta" id="meta"></span>
+      <span class="spacer"></span>
+      <span class="meta" id="updated"></span>
+    </header>
+    <pre id="errors" style="display:none;color:#f87171;font-size:11px"></pre>
+    <div id="empty" class="meta" hidden>Gateway not configured or unreachable.</div>
+    <div id="cards" hidden>
+      <div class="card" id="card-login"><h2>Connect GitHub account</h2>
+        <div class="row"><input id="login-label" placeholder="account name (e.g. work)" />
+        <button id="btn-login" class="badge">login…</button></div>
+        <div class="meta" style="margin-top:4px">Opens github.com/login/device in your browser — type the code shown below. Click a code to copy it.</div>
+      </div>
+      <div class="card" id="card-accounts"><h2>Accounts</h2><div id="accounts"></div></div>
+      <div class="card" id="card-logins"><h2>Pending logins</h2><div id="logins"></div></div>
+      <div class="card" id="card-keys"><h2>Proxy keys</h2><div id="keys"></div></div>
+      <div class="card" id="card-usage"><h2>Copilot credits</h2>
+        <div class="row"><span class="grow">Total</span><span id="usage-totals" class="meta"></span></div>
+        <table id="usage-recent"></table>
+      </div>
+      <div class="card" id="card-use"><h2>Connect a harness</h2>
+        <div class="row"><span class="grow meta">Find-or-create a proxy key and print provider config</span>
+        <button id="btn-use" class="badge">connect…</button></div>
+        <div class="row"><span class="grow meta">Update the gateway git tree (fetch, reset, reinstall, restart)</span>
+        <button id="btn-update" class="badge">update…</button></div>
+        <pre id="use-out" style="display:none;font-size:11px;white-space:pre-wrap"></pre>
+      </div>
+    </div>
+    <script>
+      "use strict";
+      const $ = (id) => document.getElementById(id);
+      const esc = (s) =>
+        String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      window.onerror = (m) => { $("errors").style.display = "block"; $("errors").textContent += `${m}\n`; };
+      window.onunhandledrejection = (e) => { $("errors").style.display = "block"; $("errors").textContent += `${e?.reason ?? e}\n`; };
+
+      function fmtCredits(n) {
+        return typeof n === "number" ? n.toFixed(2) : "—";
+      }
+      function fmtK(n) {
+        return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n ?? 0);
+      }
+
+      function render(st) {
+        if (!st || typeof st !== "object") {
+          $("empty").hidden = false;
+          $("cards").hidden = true;
+          return;
+        }
+        $("empty").hidden = true;
+        $("cards").hidden = false;
+        $("dot").className = `dot ${st.up ? "up" : "down"}`;
+        const gitc = st.git?.cloned ? ` @ ${st.git.commit ?? "?"}` : "";
+        $("meta").textContent = st.up
+          ? `${st.baseUrl} · ${st.latencyMs ?? "?"}ms${gitc}`
+          : `${st.baseUrl ?? ""} · down${gitc}`;
+        $("updated").textContent = `upd ${new Date().toLocaleTimeString()}`;
+        renderAccounts(st);
+        renderLogins(st);
+        renderKeys(st);
+        renderUsage(st);
+      }
+
+      function renderAccounts(st) {
+        const accts = Array.isArray(st.accounts) ? st.accounts : [];
+        $("card-accounts").hidden = accts.length === 0;
+        $("accounts").innerHTML = accts.map((a) =>
+          `<div class="row"><span class="dot ${a.active ? "up" : "down"}"></span>
+           <span class="grow">${esc(a.label)}${a.active ? " ★" : ""}</span>
+           <span class="meta">${esc(a.api_endpoint ?? "")}</span></div>`).join("");
+      }
+
+      function renderLogins(st) {
+        const pend = Array.isArray(st.pendingLogins) ? st.pendingLogins : [];
+        $("card-logins").hidden = pend.length === 0;
+        $("logins").innerHTML = pend.map((p) =>
+          `<div class="row"><span class="grow">${esc(p.label)}</span>
+           <span class="meta">code <b class="copycode" data-code="${esc(p.code ?? "")}">${esc(p.code ?? "…")}</b></span>
+           ${p.url ? `<a class="badge" href="${esc(p.url)}">${esc(p.url)}</a>` : ""}</div>`).join("");
+  }
+      function renderKeys(st) {
+        const keys = Array.isArray(st.keys) ? st.keys : [];
+        const labels = (st.accounts ?? []).map((a) => esc(a.label));
+        $("card-keys").hidden = keys.length === 0 && (st.accounts ?? []).length === 0;
+        $("keys").innerHTML = keys.map((k) => {
+          const sel = labels.length
+            ? `<select class="badge" data-name="${esc(k.name)}" class="pin">
+                 <option value="">follow active</option>
+                 ${labels.map((l) => `<option value="${l}" ${k.connection === l ? "selected" : ""}>${l}</option>`)}
+               </select>`
+            : "";
+          const revoke = `<button class="badge" data-revoke="${esc(k.name)}">revoke</button>`;
+          return `<div class="row"><span class="grow">${esc(k.name)}</span>
+            <span class="meta">${esc(k.last_used ? k.last_used.slice(0, 16) : "never used")}</span>
+            ${sel}
+            ${revoke}</div>`;
+        }).join("");
+      }
+
+      function renderUsage(st) {
+        const t = st.usage?.totals ?? null;
+        $("usage-totals").textContent = t
+          ? `${fmtCredits(t.credits)} credits · $${(t.cost_usd ?? 0).toFixed(2)} · ${t.requests ?? 0} req · ↑${fmtK(t.input_tokens)} ↓${fmtK(t.output_tokens)} tok`
+          : "metering unavailable";
+        const rows = Array.isArray(st.usage?.recent) ? st.usage.recent : [];
+        $("usage-recent").innerHTML = rows.map((r) =>
+          `<tr><td class="meta">${esc(String(r.ts).slice(5, 16))}</td>
+           <td>${esc(r.key_name ?? "?")}</td>
+           <td class="meta">${esc(r.model ?? "?")}</td>
+           <td>↑${fmtK(r.input_tokens)} ↓${fmtK(r.output_tokens)}</td>
+           <td>${fmtCredits(r.nano_aiu / 1e9)}</td></tr>`).join("");
+      }
+      // ---- actions ----
+      async function callTool(name, args = {}) {
+        try {
+          const result = await host.callTool(name, args);
+          return result?.structuredContent ?? result;
+        } catch (e) {
+          window.onerror(String(e));
+          return null;
+        }
+      }
+
+      $("btn-use").addEventListener("click", async () => {
+        const out = await callTool("use", {});
+        const box = $("use-out");
+        box.style.display = "block";
+        box.textContent = out?.ok
+          ? [
+              `PROVIDER (paste into harness settings):`,
+              JSON.stringify(out.provider, null, 2),
+              "",
+              `API key: ${out.apiKey}`,
+              out.note ?? "",
+            ].join("\n")
+          : `failed: ${out?.error ?? "unknown"}`;
+      });
+
+      $("btn-update").addEventListener("click", async () => {
+        const out = await callTool("update", {});
+        const box = $("use-out");
+        box.style.display = "block";
+        box.textContent = out?.ok
+          ? (out.updated ? `updated ${out.behind} commit(s) → ${out.commit ?? "?"}${out.restarted ? " · restarted" : ""}` : `up to date (${out.commit ?? "?"})`)
+          : `failed: ${out?.error ?? "unknown"}`;
+        await refresh();
+      });
+
+      $("btn-login").addEventListener("click", async () => {
+        const label = $("login-label").value.trim() || "github";
+        const out = await callTool("login", { label });
+        const box = $("use-out");
+        box.style.display = "block";
+        box.textContent = out?.code
+          ? `code ${out.code} — ${out.openedInBrowser ? "github.com/login/device opened in your browser" : `open ${out.url ?? "github.com/login/device"} manually`} and type the code`
+          : `login failed: ${out?.error ?? "unknown"}`;
+        await refresh();
+      });
+
+      // delegated actions: copy code, pin select change + revoke buttons
+      document.addEventListener("click", async (e) => {
+        const el = e.target.closest(".copycode");
+        if (!el) return;
+        try { await navigator.clipboard.writeText(el.dataset.code ?? el.textContent); } catch { }
+      });
+      document.addEventListener("change", async (e) => {
+        const sel = e.target.closest("select.pin");
+        if (!sel) return;
+        await callTool("keyPin", { name: sel.dataset.name, label: sel.value || null });
+        await refresh();
+      });
+      document.addEventListener("click", async (e) => {
+        const btn = e.target.closest("button[data-revoke]");
+        if (!btn) return;
+        if (!confirm(`Revoke key '${btn.dataset.revoke}'? Harnesses using it stop working immediately.`)) return;
+        await callTool("keyRevoke", { name: btn.dataset.revoke });
+        await refresh();
+      });
+
+      // ---- bridge ----
+      let stateUri = null;
+      host.subscribe(() => {});
+      host.onResourceUpdated((uri) => { if (uri === stateUri) void refresh(); });
+      host.ready().then(async () => {
+        applyHostStyles();
+        try {
+          const resources = await host.listResources();
+          stateUri = resources.resources.find((r) => r.uri.endsWith("/state"))?.uri ?? null;
+          if (stateUri) await host.subscribeResource(stateUri);
+        } catch (e) { window.onerror(String(e)); }
+        await refresh();
+      });
+
+      async function refresh() {
+        const st = await callTool("status", {});
+        render(st);
+      }
+
+      function applyHostStyles() {
+        const variables = host.hostContext?.styles?.variables ?? {};
+        for (const [name, value] of Object.entries(variables)) {
+          if (typeof value === "string") document.documentElement.style.setProperty(name, value);
+        }
+        document.documentElement.dataset.theme = host.theme ?? "";
+      }
+    </script>
+  </body>
+</html>

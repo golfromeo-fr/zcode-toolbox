@@ -36,7 +36,7 @@
     {
       "name": "copilot-gateway",
       "source": "./copilot-gateway",
-      "version": "0.1.2",
+      "version": "0.1.4",
       "description": "Runs the crispy-copilot-gateway (GitHub Copilot API gateway) locally for any harness: clones the gateway from GitHub into the plugin data dir and installs it (venv + pip) on first start; gateway_update keeps the git tree current. Isolated plugin-owned store; composer chip (up/latency, credits + accounts), side-pane view (accounts, device-flow login, proxy keys + pinning, credits metering, provider config) and MCP tools. Needs git + python>=3.12.",
       "category": "developer-tools",
       "tags": [

@@ -282,8 +282,8 @@
           bridgeName = name;
           window.host = bridge;
           bridge.subscribe(() => {});
-          h.onResourceUpdated((uri) => { if (uri === stateUri) void refresh(); });
-          return h.ready();
+          bridge.onResourceUpdated((uri) => { if (uri === stateUri) void refresh(); });
+          return bridge.ready();
         })
         .then(async () => {
           applyHostStyles();

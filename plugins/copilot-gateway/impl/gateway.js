@@ -212,12 +212,18 @@ function runStep(cmd, args, timeoutMs) {
 // fails fast instead of silently using the user's GitHub credentials.
 function gitAnon(args, timeoutMs) {
   return new Promise((resolve) => {
-    execFile("git", ["-c", "credential.helper=", ...args], {
-      timeout: timeoutMs,
-      maxBuffer: 1 << 22,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_SYSTEM: devNull },
-    }, (err, stdout, stderr) =>
-      resolve({ ok: !err, stdout: String(stdout || ""), stderr: String(stderr || "") }));
+    resolveGit().then((gitPath) => {
+      if (!gitPath) {
+        resolve({ ok: false, stdout: "", stderr: "git not found" });
+        return;
+      }
+      execFile(gitPath, ["-c", "credential.helper=", ...args], {
+        timeout: timeoutMs,
+        maxBuffer: 1 << 22,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_SYSTEM: devNull },
+      }, (err, stdout, stderr) =>
+        resolve({ ok: !err, stdout: String(stdout || ""), stderr: String(stderr || "") }));
+    });
   });
 }
 
@@ -240,9 +246,33 @@ async function findPython(cfg) {
   return out;
 }
 
+// git discovery: CRISPY_GATEWAY_GIT override > PATH > standard Windows install
+// locations. The ZCode app process can predate a git install (stale PATH), so
+// on Windows PATH alone is not enough - probing the files is.
+let gitPathCache = null;
+async function resolveGit() {
+  if (gitPathCache) return gitPathCache;
+  const candidates = [];
+  if (process.env.CRISPY_GATEWAY_GIT) candidates.push(process.env.CRISPY_GATEWAY_GIT);
+  candidates.push("git");
+  if (IS_WIN) {
+    const pf = process.env.ProgramFiles || "C:\\Program Files";
+    const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    if (process.env.LOCALAPPDATA) candidates.push(join(process.env.LOCALAPPDATA, "Programs", "Git", "cmd", "git.exe"));
+    candidates.push(join(pf, "Git", "cmd", "git.exe"));
+    candidates.push(join(pf86, "Git", "cmd", "git.exe"));
+    if (process.env.USERPROFILE) candidates.push(join(process.env.USERPROFILE, "scoop", "apps", "git", "current", "cmd", "git.exe"));
+  }
+  for (const c of candidates) {
+    if (c !== "git" && !existsSync(c)) continue;
+    const r = await runStep(c, ["--version"], 5000);
+    if (r.ok) { gitPathCache = c; return c; }
+  }
+  return null;
+}
+
 async function gitBin() {
-  const r = await gitAnon(["--version"], 5000);
-  return r.ok ? "git" : null;
+  return resolveGit();
 }
 
 let gitCache = { at: 0, key: null, val: null };
@@ -289,7 +319,11 @@ async function doInstall(cfg) {
           await appendLog(cfg, "stale non-git install dir wiped for re-clone");
         }
         const git = await gitBin();
-        if (!git) return { ok: false, error: "git not found - install git, then gateway_start again" };
+        if (!git) {
+          return { ok: false, error: IS_WIN
+            ? "git not found - install Git for Windows (git-scm.com, default options), then press start again (restart ZCode if it persists)"
+            : "git not found - install git (e.g. apt install git), then gateway_start again" };
+        }
         const c = await gitAnon(["clone", GIT_REPO, cfg.path], 300_000);
         if (!c.ok) {
           await appendLog(cfg, `clone failed: ${c.stderr.slice(0, 300)}`);
@@ -367,6 +401,11 @@ export async function gatewayUpdate() {
   const cfg = await loadCfg();
   if (!existsSync(join(cfg.path, ".git"))) {
     return { ok: false, error: "no git tree yet - run gateway_start first (it clones the repo)" };
+  }
+  if (!(await gitBin())) {
+    return { ok: false, error: IS_WIN
+      ? "git not found - install Git for Windows (git-scm.com), then try again (restart ZCode if it persists)"
+      : "git not found - install git, then try again" };
   }
   const h = await healthz();
   const wasUp = h.up;

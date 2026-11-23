@@ -21,6 +21,8 @@ Run the `gateway_status` MCP tool first. Interpretation guide:
 
 ## 1b. Start/stop
 
+The gateway self-exits gracefully after 30 minutes without requests (default; `idle_exit` userConfig, 0 = keep running until stopped). While ZCode is open the chip's 5s health poll keeps it alive, so closing ZCode is effectively 'stop soon'.
+
 `gateway_start` is a no-op when already up (health-check first, never double-starts); first run auto-installs the embedded gateway (no separate checkout needed). `gateway_stop` kills only the exact host:port instance from status. The plugin-managed gateway uses its own store at the plugin data dir's `store/` subdirectory — isolated from any standalone gateway checkout, so a fresh machine starts with zero accounts and zero keys: do the device-flow login (step 2) once there.
 
 ## 2. Connect a GitHub account (device flow)

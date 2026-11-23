@@ -457,7 +457,13 @@ export async function gatewayStart() {
   await appendLog(cfg, `serve starting on ${cfg.host}:${cfg.port}`);
   try {
     const log = openSync(cfg.serveLog, "a");
-    const child = spawn(cfg.cli, ["serve", "--host", cfg.host, "--port", String(cfg.port)], {
+    // idle-exit: while ZCode runs, the chip polls /healthz every 5s and keeps
+    // the gateway alive; after ZCode closes, the gateway exits gracefully.
+    // CRISPY_GATEWAY_IDLE_EXIT=0 disables (run until stopped).
+    const idleArg = [];
+    const idleMin = Number(process.env.CRISPY_GATEWAY_IDLE_EXIT ?? "30");
+    if (Number.isFinite(idleMin) && idleMin > 0) idleArg.push("--idle-exit", String(idleMin));
+    const child = spawn(cfg.cli, ["serve", "--host", cfg.host, "--port", String(cfg.port), ...idleArg], {
       detached: true,
       windowsHide: true,
       stdio: ["ignore", log, log],
@@ -634,6 +640,7 @@ export async function gatewayStatus() {
     pythonOk: (await findPython(cfg)).ok,
     installing: installPromise != null,
     venvOk: existsSync(cfg.cli),
+    idleExitMin: Number(process.env.CRISPY_GATEWAY_IDLE_EXIT ?? "30"),
     git: await gitInfo(cfg),
     accounts: conns,
     activeLabel: conns.find((c) => c.active)?.label ?? null,

@@ -24,6 +24,16 @@
         color: inherit; font: inherit; padding: 2px 6px; min-width: 0; flex: 1;
       }
       .copycode { cursor: pointer; }
+      #use-wrap {
+        max-height: 45vh; overflow: auto; margin-top: 4px;
+        border: 1px solid rgba(127,127,127,0.35); border-radius: 4px;
+      }
+      .usebar {
+        position: sticky; top: 0; text-align: right; padding: 2px 6px;
+        background: var(--zcode-bg, var(--bg, #fff));
+        border-bottom: 1px solid rgba(127,127,127,0.35);
+      }
+      #use-out { margin: 0; padding: 4px 6px; font-size: 11px; white-space: pre-wrap; }
       table { width: 100%; border-collapse: collapse; font-size: 11px; }
       th { text-align: left; opacity: 0.55; font-weight: 500; padding: 1px 6px 1px 0; }
       td { padding: 1px 6px 1px 0; white-space: nowrap; }
@@ -61,7 +71,10 @@
         <button id="btn-newkey" class="badge">new key…</button></div>
         <div class="row"><span class="grow meta">Update the gateway git tree (fetch, reset, reinstall, restart)</span>
         <button id="btn-update" class="badge">update…</button></div>
-        <pre id="use-out" style="display:none;font-size:11px;white-space:pre-wrap"></pre>
+        <div id="use-wrap" hidden>
+          <div class="usebar"><button id="btn-copy-config" class="badge">copy config</button></div>
+          <pre id="use-out"></pre>
+        </div>
       </div>
     </div>
     <script>
@@ -179,7 +192,7 @@
 
       function showConfig(out) {
         const box = $("use-out");
-        box.style.display = "block";
+        $("use-wrap").hidden = false;
         box.textContent = out?.ok
           ? [
               `PROVIDER (paste into harness settings):`,
@@ -190,6 +203,7 @@
             ].join("\n")
           : `failed: ${out?.error ?? "unknown"}`;
         $("btn-copy-config").style.display = out?.ok ? "" : "none";
+        $("use-wrap").scrollTop = 0;
       }
       $("btn-config").addEventListener("click", async () => {
         showConfig(await callTool("config", {}));
@@ -205,7 +219,7 @@
       $("btn-update").addEventListener("click", async () => {
         const out = await callTool("update", {});
         const box = $("use-out");
-        box.style.display = "block";
+        $("use-wrap").hidden = false;
         box.textContent = out?.ok
           ? (out.updated ? `updated ${out.behind} commit(s) → ${out.commit ?? "?"}${out.restarted ? " · restarted" : ""}` : `up to date (${out.commit ?? "?"})`)
           : `failed: ${out?.error ?? "unknown"}`;
@@ -230,7 +244,7 @@
         const st0 = await callTool("status", {});
         const out = st0?.up ? await callTool("stop", {}) : await callTool("start", {});
         const box = $("use-out");
-        box.style.display = "block";
+        $("use-wrap").hidden = false;
         box.textContent = out?.ok
           ? (out.up
               ? `gateway up (${out.latencyMs ?? "?"}ms)${out.installed ? " · freshly installed" : ""}`

@@ -112,7 +112,9 @@ const refresh = async (st) => {
 };
 const base = (over = {}) => ({
   up: false, latencyMs: null, baseUrl: "http://127.0.0.1:8812", venvOk: false, git: { cloned: false },
-  accounts: [], keys: [], pendingLogins: [], usage: { totals: null, recent: [] }, platform: "linux", ...over,
+  accounts: [], keys: [], pendingLogins: [], usage: { totals: null, recent: [] }, platform: "linux",
+  gateway: { managed: true, installed: "0.1.1", minVersion: "0.1.0", wantedVersion: "0.1.1", tooOld: false, unsupported: [], outdated: false },
+  ...over,
 });
 const pending = (phase, extra = {}) => [{ phase, label: "work", url: "https://github.com/login/device", ...extra }];
 let passed = 0;
@@ -142,20 +144,78 @@ await check("load: gateway not installed yet", async () => {
   assert.equal(el("login-flow").hidden, true);
 });
 
-await check("start button follows the current state", async () => {
+await check("start button follows the current state and reports under itself", async () => {
   const seqFrom = (n) => calls.slice(n).map((c) => c[0]);
   tools.start = () => ({ ok: true, up: true, latencyMs: 24, installed: true });
   let n = calls.length;
   await click("btn-start");
   assert.deepEqual(seqFrom(n), ["status", "start", "status"]);
-  assert.match(el("use-out").textContent, /gateway up \(24ms\) · freshly installed/);
+  assert.equal(el("service-msg").hidden, false);
+  assert.equal(el("service-msg").className, "svc ok");
+  assert.equal(el("service-msg").textContent, "Gateway is up.");
+  assert.equal(el("use-wrap").hidden, true, "start must not write into the config box at the bottom of the page");
   status = base({ up: true, venvOk: true, latencyMs: 24 });
-  tools.stop = () => ({ ok: true, up: false });
+  // stopping makes the gateway go down: the refreshed status must say so
+  tools.stop = () => { status = base({ up: false, venvOk: true }); return { ok: true, up: false }; };
   n = calls.length;
   await click("btn-start");
   assert.deepEqual(seqFrom(n), ["status", "stop", "status"]);
-  assert.match(el("use-out").textContent, /gateway stopped/);
+  assert.equal(el("service-msg").textContent, "Gateway stopped.");
+  assert.equal(el("btn-start").textContent, "start");
 });
+
+await check("an installed gateway older than the extension is called out before anything is pressed", async () => {
+  const old = { managed: true, installed: "0.1.0", minVersion: "0.1.0", wantedVersion: "0.1.1", tooOld: false, unsupported: ["--idle-exit"], outdated: true };
+  await refresh(base({ venvOk: true, up: false, gateway: old }));
+  assert.equal(el("gateway-note").hidden, false);
+  assert.match(el("gateway-note").textContent, /Gateway 0\.1\.0 is installed; this extension wants 0\.1\.1\. Start updates it first\./);
+  assert.match(el("empty").textContent, /Gateway 0\.1\.0 is out of date .* Press start: it updates the gateway first, then starts\./);
+  await refresh(base({ venvOk: true, up: true, gateway: old }));
+  assert.match(el("gateway-note").textContent, /update… brings it to the latest\./);
+  assert.equal(el("empty").hidden, true);
+  await refresh(base({ venvOk: true, up: false, gateway: { ...old, managed: false } }));
+  assert.match(el("gateway-note").textContent, /Update that checkout yourself\./);
+  assert.doesNotMatch(el("empty").textContent, /updates the gateway first/);
+  await refresh(base({ venvOk: true, up: false }));
+  assert.equal(el("gateway-note").hidden, true);
+  assert.match(el("empty").textContent, /installed but not running — press start/);
+});
+
+await check("start reports the gateway's own words under the button", async () => {
+  tools.start = () => ({ ok: false, message: "The gateway exited at once instead of starting.", error: "the gateway process exited with code 2", detail: "Usage: crispy-copilot serve [OPTIONS]\nNo such option: --idle-exit" });
+  await click("btn-start");
+  assert.equal(el("service-msg").className, "svc err");
+  assert.equal(el("service-msg").textContent, "The gateway exited at once instead of starting.\nthe gateway process exited with code 2\nUsage: crispy-copilot serve [OPTIONS]\nNo such option: --idle-exit");
+});
+
+await check("start says when it updated the gateway first, or had to leave a feature out", async () => {
+  tools.start = () => ({ ok: true, up: true, message: "Gateway updated from 0.1.0 to 0.1.1 (1 commit), then started.", healed: { from: "0.1.0", to: "0.1.1", behind: 1 } });
+  await click("btn-start");
+  assert.equal(el("service-msg").className, "svc ok");
+  assert.equal(el("service-msg").textContent, "Gateway updated from 0.1.0 to 0.1.1 (1 commit), then started.");
+  tools.start = () => ({ ok: true, up: true, omitted: ["--idle-exit"], message: "Started without idle exit (the gateway will keep running until stopped): gateway 0.1.0 is older than 0.1.1 and the update did not succeed.", notes: ["The gateway could not be updated: git fetch failed"] });
+  await click("btn-start");
+  assert.equal(el("service-msg").className, "svc warn");
+  assert.equal(el("service-msg").textContent, "Started without idle exit (the gateway will keep running until stopped): gateway 0.1.0 is older than 0.1.1 and the update did not succeed.\nThe gateway could not be updated: git fetch failed");
+});
+
+await check("update… sits in the header next to start and reports under it", async () => {
+  assert.match(html, /<header>[\s\S]*?<button id="btn-start"[^>]*>[^<]*<\/button>\s*<button id="btn-update"[^>]*>[^<]*<\/button>\s*<\/header>/);
+  tools.update = () => ({ ok: true, updated: true, behind: 9, commit: "bd999d7", message: "Updated: 9 commits, now at bd999d7; the gateway was restarted." });
+  let n = calls.length;
+  await click("btn-update");
+  assert.deepEqual(calls.slice(n).map((c) => c[0]), ["update", "status"]);
+  assert.equal(el("service-msg").className, "svc ok");
+  assert.equal(el("service-msg").textContent, "Updated: 9 commits, now at bd999d7; the gateway was restarted.");
+  assert.equal(el("btn-update").textContent, "update…");
+  assert.equal(el("use-wrap").hidden, true, "update must not write into the config box");
+  tools.update = () => ({ ok: false, managed: false, message: "This checkout is not managed by this plugin, so it was not changed.", error: 'update it yourself: git -C "/x" pull' });
+  await click("btn-update");
+  assert.equal(el("service-msg").className, "svc err");
+  assert.match(el("service-msg").textContent, /not managed by this plugin, so it was not changed\.\nupdate it yourself/);
+});
+  let n = calls.length;
+  await click("btn-start");
 
 const login = (extra = {}) => ({ ok: true, phase: "awaiting-authorization", label: "work", code: "ABCD-1234", url: "https://github.com/login/device", platform: "linux", ...extra });
 

@@ -105,17 +105,17 @@ const TOOLS = {
     run: () => gatewayStatus(),
   },
   gateway_start: {
-    description: "Start the local gateway service. First run clones the gateway from GitHub into the plugin data dir and installs it (venv + pip; needs git, python>=3.12, one-time network). No-op when already up.",
+    description: "Start the gateway. First run clones it from GitHub and installs it (git, python>=3.12, network once). An installed gateway older than this extension needs is updated first on a plugin-managed install, or started without the newer feature; the result says which. No-op when already up. Always relay its message, notes, error and detail.",
     inputSchema: obj({}),
     run: () => gatewayStart(),
   },
   gateway_stop: {
-    description: "Stop the local gateway service (kills only this config's exact host:port instance).",
+    description: "Stop the gateway this extension started, and nothing else. When the gateway is not running or something else answers on the port, nothing is signalled and the result says so.",
     inputSchema: obj({}),
     run: () => gatewayStop(),
   },
   gateway_update: {
-    description: "Update the gateway git tree: fetch origin, reset --hard to origin/main, reinstall deps (pip), restart the service when it was running. Clone happens automatically on first gateway_start.",
+    description: "Update the plugin-managed gateway to the latest on its main branch: fetch, reset, reinstall, restart if it was running. Never changes an external gateway_path checkout; returns the command to run there instead. A step that cannot run is an error, never 'already on latest'.",
     inputSchema: obj({}),
     run: () => gatewayUpdate(),
   },

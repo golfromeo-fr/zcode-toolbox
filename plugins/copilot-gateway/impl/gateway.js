@@ -3,7 +3,7 @@
 // Local-only surface: GET /healthz (unauthenticated), 0600 state files
 // (secrets stripped on read), and the gateway venv CLI. GitHub tokens and
 // proxy-key hashes are never logged or returned.
-import { readFile, writeFile, rename, chmod, appendFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, rename, chmod, appendFile, mkdir, open } from "node:fs/promises";
 import { spawn, execFile } from "node:child_process";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -19,7 +19,7 @@ const DEFAULT_PATH = join(homedir(), APP_NAME);
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8812;
 const HEALTH_TIMEOUT_MS = 1500;
-const START_TIMEOUT_MS = 20_000;
+const START_TIMEOUT_MS = 60_000; // slow machines; an early exit is noticed at once
 const USAGE_CACHE_MS = 10_000;
 
 // CRISPY_GATEWAY_* env (userConfig via manifest) > gateway .env > defaults.
@@ -380,13 +380,148 @@ async function gitInfo(cfg) {
   return out;
 }
 
-// one install at a time; concurrent starts share the same promise
-let installPromise = null;
+// ---- what this extension needs from the gateway ----
+// The extension mandates the gateway version it runs: it never passes the
+// gateway an option the installed version does not know.
+//   GATEWAY_MIN_VERSION  the oldest gateway this extension will start at all
+//   SERVE_OPTIONS        every option gateway_start adds to `serve`, each with
+//                        the gateway version that introduced it
+// An install older than an option's version is updated first when this plugin
+// manages it, or started without that option, and the result says which.
+// A release that relies on a new gateway feature must (1) come after that
+// gateway commit is on origin/main and (2) raise the version here. 0.2.3
+// passed --idle-exit without this, and every install cloned before gateway
+// 0.1.1 stopped starting (incident of 2026-11-24).
+const GATEWAY_MIN_VERSION = "0.1.0";
+function idleExitMinutes() {
+  const n = Number(process.env.CRISPY_GATEWAY_IDLE_EXIT ?? "30");
+  return Number.isFinite(n) && n > 0 ? n : null; // null: switched off by its setting
+}
+const SERVE_OPTIONS = {
+  "--idle-exit": {
+    since: "0.1.1",
+    what: "idle exit (the gateway will keep running until stopped)",
+    args: () => { const m = idleExitMinutes(); return m == null ? null : [String(m)]; },
+  },
+};
 
+function parseVersion(v) {
+  const m = /^\s*v?(\d+)\.(\d+)(?:\.(\d+))?/.exec(String(v ?? ""));
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3] ?? 0)] : null;
+}
+// below zero when a is older than b, 0 when equal, above zero when newer;
+// null when either version is unknown
+function compareVersions(a, b) {
+  const x = parseVersion(a);
+  const y = parseVersion(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i];
+  return 0;
+}
+// the newest gateway that any option in use needs
+function wantedVersion() {
+  return Object.values(SERVE_OPTIONS)
+    .filter((o) => o.args() != null)
+    .reduce((w, o) => (compareVersions(o.since, w) > 0 ? o.since : w), GATEWAY_MIN_VERSION);
+}
+
+// The version that actually runs is the package installed in the venv. The git
+// tree can be ahead of it when a pip step failed, so the tree alone is not enough.
+let versionCache = { at: 0, key: null, val: undefined };
+function bustVersionCache() { versionCache = { at: 0, key: null, val: undefined }; }
+async function installedGatewayVersion(cfg) {
+  if (!existsSync(cfg.py)) return null;
+  if (versionCache.val !== undefined && versionCache.key === cfg.path && Date.now() - versionCache.at < 60_000) return versionCache.val;
+  const r = await runStep(cfg.py, ["-c", "from importlib.metadata import version; print(version('crispy-copilot-gateway'))"], 15_000);
+  const v = r.ok ? r.stdout.trim().slice(0, 40) : null;
+  versionCache = { at: Date.now(), key: cfg.path, val: v };
+  return v;
+}
+// the version written in the checkout's pyproject.toml: tells whether the venv is in step with the tree
+async function treeVersion(cfg) {
+  try {
+    const m = /^version\s*=\s*"([^"]+)"/m.exec(await readFile(join(cfg.path, "pyproject.toml"), "utf8"));
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+// What the installed gateway is, and which options in use it does not know.
+async function gatewayRequirement(cfg) {
+  const installed = await installedGatewayVersion(cfg);
+  const req = {
+    managed: cfg.path === cfg.installDir,
+    installed,
+    minVersion: GATEWAY_MIN_VERSION,
+    wantedVersion: wantedVersion(),
+    tooOld: compareVersions(installed, GATEWAY_MIN_VERSION) < 0,
+    unsupported: Object.entries(SERVE_OPTIONS)
+      .filter(([, o]) => o.args() != null && compareVersions(installed, o.since) < 0)
+      .map(([name]) => name),
+  };
+  req.outdated = req.tooOld || req.unsupported.length > 0;
+  return req;
+}
+
+// ---- one install, update or start at a time, across processes ----
+// The view tools run in the extension host and the MCP tools in a separate
+// process, both on the same runtime dir, so an in-memory promise is not enough.
+// mkdir is atomic. A lock whose owner is gone, or that is older than any of
+// these steps can take, is stale and gets removed.
+const LOCK_STALE_MS = 20 * 60_000;
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } // signal 0 only probes
+}
+async function withRuntimeLock(cfg, name, fn, waitMs = 10 * 60_000) {
+  const dir = join(cfg.runtimeDir, `${name}.lock`);
+  mkdirSync(cfg.runtimeDir, { recursive: true });
+  const t0 = Date.now();
+  for (;;) {
+    try {
+      mkdirSync(dir);
+      break;
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      let owner = null;
+      let age = 0;
+      try { owner = parseInt(readFileSync(join(dir, "pid"), "utf8").trim(), 10) || null; } catch { }
+      try { age = Date.now() - statSync(dir).mtimeMs; } catch { }
+      const stale = age > LOCK_STALE_MS || (owner ? !pidAlive(owner) : age > 30_000);
+      if (stale) {
+        try { rmSync(dir, { recursive: true, force: true }); } catch { }
+        continue;
+      }
+      if (Date.now() - t0 > waitMs) {
+        throw new Error(`another ${name} is still running (pid ${owner ?? "?"}); try again when it has finished`);
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  try { writeFileSync(join(dir, "pid"), String(process.pid), { mode: 0o600 }); } catch { }
+  try {
+    return await fn();
+  } finally {
+    // only our own lock: it may have been taken over as stale while we ran
+    try {
+      const owner = parseInt(readFileSync(join(dir, "pid"), "utf8").trim(), 10);
+      if (owner === process.pid) rmSync(dir, { recursive: true, force: true });
+    } catch { }
+  }
+}
+
+let installPromise = null;
 async function ensureInstall(cfg) {
   if (existsSync(cfg.cli)) return { ok: true, fresh: false };
   if (installPromise) return installPromise;
-  installPromise = doInstall(cfg).finally(() => { installPromise = null; });
+  installPromise = withRuntimeLock(cfg, "install", async () => {
+    // another process may have finished the install while this one waited for the lock
+    if (existsSync(cfg.cli)) return { ok: true, fresh: false };
+    const r = await doInstall(cfg);
+    if (r.ok) bustVersionCache();
+    return r;
+  }).catch((e) => ({ ok: false, error: String(e).slice(0, 300) }))
+    .finally(() => { installPromise = null; });
   return installPromise;
 }
 
@@ -410,9 +545,7 @@ async function doInstall(cfg) {
         }
         const git = await gitBin();
         if (!git) {
-          return { ok: false, error: IS_WIN
-            ? "git not found - install Git for Windows (git-scm.com, default options), then press start again (restart ZCode if it persists)"
-            : "git not found - install git (e.g. apt install git), then gateway_start again" };
+          return { ok: false, error: gitMissingError() };
         }
         const c = await gitAnon(["clone", GIT_REPO, cfg.path], 300_000);
         if (!c.ok) {
@@ -447,39 +580,200 @@ async function doInstall(cfg) {
   }
 }
 
+function gitMissingError() {
+  return IS_WIN
+    ? "git not found - install Git for Windows (git-scm.com, default options), then try again (restart ZCode if it persists)"
+    : "git not found - install git, then try again";
+}
+
+// Bring the managed install up to origin/<branch> and make the venv match the
+// tree. Managed installs only: an external gateway_path checkout is never
+// written to. Every git call goes through the resolved, hermetic git, and a
+// step that cannot run is an error, never "already on latest".
+async function updateTree(cfg) {
+  return withRuntimeLock(cfg, "update", async () => {
+    if (!(await gitBin())) return { ok: false, error: gitMissingError() };
+    const f = await gitAnon(["-C", cfg.path, "fetch", "origin", "--quiet"], 120_000);
+    if (!f.ok) return { ok: false, error: `git fetch failed: ${f.stderr.slice(0, 200)}` };
+    const behind = await gitAnon(["-C", cfg.path, "rev-list", "--count", `HEAD..origin/${GIT_BRANCH}`], 10_000);
+    if (!behind.ok) return { ok: false, error: `git rev-list failed: ${behind.stderr.slice(0, 200)}` };
+    const n = Number(behind.stdout.trim());
+    if (!Number.isInteger(n) || n < 0) return { ok: false, error: `git rev-list gave an unexpected answer: ${behind.stdout.trim().slice(0, 40)}` };
+    const commitBefore = (await gitInfo(cfg)).commit;
+    // nothing to do when the tree is current and the venv already matches it
+    const installed = await installedGatewayVersion(cfg);
+    if (n === 0 && installed != null && compareVersions(installed, await treeVersion(cfg)) === 0) {
+      return { ok: true, updated: false, behind: 0, commit: commitBefore };
+    }
+    if (n > 0) {
+      const r = await gitAnon(["-C", cfg.path, "reset", "--hard", `origin/${GIT_BRANCH}`], 30_000);
+      if (!r.ok) return { ok: false, error: `git reset failed: ${r.stderr.slice(0, 200)}` };
+      await appendLog(cfg, `updated: ${n} commit(s), reset to origin/${GIT_BRANCH}`);
+    }
+    // pip is mandatory: the CLI runs the copy installed in the venv, not the tree
+    const pip = join(venvBin(cfg), IS_WIN ? "pip.exe" : "pip");
+    const p = await runStep(pip, ["install", "--quiet", "--disable-pip-version-check", cfg.path], 420_000);
+    if (!p.ok) return { ok: false, error: `pip install after update failed: ${p.stderr.slice(0, 200)}` };
+    bustVersionCache();
+    gitCache = { at: 0, key: null, val: null };
+    return { ok: true, updated: true, behind: n, commit: (await gitInfo(cfg)).commit, commitBefore };
+  });
+}
+
 // ---- lifecycle ----
 export async function gatewayStart() {
   const cfg = await loadCfg();
   const h = await healthz();
-  if (h.up) return { ok: true, already: true, ...h };
+  if (h.up) return { ok: true, already: true, message: "The gateway was already running.", ...h };
   const inst = await ensureInstall(cfg);
-  if (!inst.ok) return { ok: false, error: inst.error, hint: `install needs python>=3.12 + network for pip; log: ${cfg.installLog}` };
-  await appendLog(cfg, `serve starting on ${cfg.host}:${cfg.port}`);
+  if (!inst.ok) {
+    return { ok: false, error: inst.error, message: "The gateway could not be installed.", hint: `install needs python>=3.12 + network for pip; log: ${cfg.installLog}` };
+  }
+  try {
+    return await withRuntimeLock(cfg, "start", async () => {
+      // another process may have started it while this one waited for the lock
+      const again = await healthz();
+      if (again.up) return { ok: true, already: true, message: "The gateway was already running.", ...again };
+      return startInstalled(cfg, inst);
+    });
+  } catch (e) {
+    return { ok: false, error: String(e).slice(0, 300) };
+  }
+}
+
+async function startInstalled(cfg, inst) {
+  const notes = [];
+  let req = await gatewayRequirement(cfg);
+  let healed = null;
+  if (req.outdated && req.managed) {
+    // the extension mandates the gateway version: bring the install up to date first
+    const upd = await updateTree(cfg);
+    if (!upd.ok) {
+      notes.push(`The gateway could not be updated: ${upd.error}`);
+    } else {
+      healed = { from: req.installed, to: await installedGatewayVersion(cfg), behind: upd.behind, commit: upd.commit };
+      req = await gatewayRequirement(cfg);
+    }
+  }
+  if (req.tooOld) {
+    return {
+      ok: false, gateway: req, healed, notes,
+      message: `Not started: this extension needs gateway ${GATEWAY_MIN_VERSION} or newer, and ${req.installed} is installed.`,
+      error: `gateway ${req.installed} is older than the minimum ${GATEWAY_MIN_VERSION}`,
+      hint: req.managed ? "update the gateway (update…), then start again" : `update the checkout at ${cfg.path} yourself, then start again`,
+    };
+  }
+  // only the options this gateway knows
+  const args = ["serve", "--host", cfg.host, "--port", String(cfg.port)];
+  const omitted = [];
+  for (const [name, o] of Object.entries(SERVE_OPTIONS)) {
+    const a = o.args();
+    if (a == null) continue; // switched off by its setting
+    if (req.unsupported.includes(name)) omitted.push(name); else args.push(name, ...a);
+  }
+  const messages = [];
+  if (healed) {
+    const count = healed.behind ? ` (${healed.behind} commit${healed.behind === 1 ? "" : "s"})` : "";
+    messages.push(`Gateway updated from ${healed.from ?? "?"} to ${healed.to ?? "?"}${count}, then started.`);
+  }
+  for (const name of omitted) {
+    const why = req.managed ? " and the update did not succeed" : ` and the checkout at ${cfg.path} is not changed by this plugin`;
+    messages.push(`Started without ${SERVE_OPTIONS[name].what}: gateway ${req.installed} is older than ${SERVE_OPTIONS[name].since}${why}.`);
+  }
+  if (!messages.length) messages.push("Gateway is up.");
+
+  await appendLog(cfg, `serve starting on ${cfg.host}:${cfg.port}${omitted.length ? ` (without ${omitted.join(", ")})` : ""}`);
+  const logFrom = fileEnd(cfg.serveLog);
+  let child;
   try {
     const log = openSync(cfg.serveLog, "a");
-    // idle-exit: while ZCode runs, the chip polls /healthz every 5s and keeps
-    // the gateway alive; after ZCode closes, the gateway exits gracefully.
-    // CRISPY_GATEWAY_IDLE_EXIT=0 disables (run until stopped).
-    const idleArg = [];
-    const idleMin = Number(process.env.CRISPY_GATEWAY_IDLE_EXIT ?? "30");
-    if (Number.isFinite(idleMin) && idleMin > 0) idleArg.push("--idle-exit", String(idleMin));
-    const child = spawn(cfg.cli, ["serve", "--host", cfg.host, "--port", String(cfg.port), ...idleArg], {
+    child = spawn(cfg.cli, args, {
       detached: true,
       windowsHide: true,
       stdio: ["ignore", log, log],
       env: { ...process.env, CRISPY_COPILOT_DATA_DIR: cfg.dataDir },
     });
-    child.unref();
-    try { await writeFile(join(cfg.runtimeDir, "serve.pid"), String(child.pid ?? ""), { mode: 0o600 }); } catch { }
     closeSync(log);
   } catch (e) {
-    return { ok: false, error: `spawn failed: ${String(e).slice(0, 200)}` };
+    return { ok: false, gateway: req, healed, omitted, notes, message: "The gateway could not be launched.", error: String(e).slice(0, 200) };
   }
-  const h2 = await waitForHealth(true, START_TIMEOUT_MS);
-  if (!h2.up) {
-    return { ok: false, hint: `gateway did not come up within ${START_TIMEOUT_MS / 1000}s; tail ${cfg.serveLog}`, ...h2 };
+  // Watch it from the first moment: an exit before /healthz answers is the
+  // gateway's own verdict and must come back at once, not after the timeout.
+  const state = {};
+  const onExit = (code, signal) => { state.exited = { code, signal }; };
+  const onSpawnError = (e) => { state.exited = { error: String(e) }; };
+  child.on("exit", onExit);
+  child.on("error", onSpawnError);
+  child.unref();
+  // this plugin started it: remember the number so that stop can find it again
+  try { await writeFile(join(cfg.runtimeDir, "serve.pid"), String(child.pid ?? ""), { mode: 0o600 }); } catch { }
+  const up = await awaitStart(state);
+  child.removeListener("exit", onExit);
+  const extra = { gateway: req, healed, omitted, notes, args };
+  if (up.up) {
+    return { ok: true, installed: inst.fresh === true, steps: inst.steps ?? [], message: messages.join(" "), ...up, ...extra };
   }
-  return { ok: true, installed: inst.fresh === true, steps: inst.steps ?? [], ...h2 };
+  try { rmSync(join(cfg.runtimeDir, "serve.pid"), { force: true }); } catch { }
+  const detail = await serveLogTail(cfg, logFrom);
+  if (state.exited) {
+    const how = state.exited.error ?? (state.exited.code != null ? `code ${state.exited.code}` : state.exited.signal ?? "an unknown status");
+    return { ok: false, message: "The gateway exited at once instead of starting.", ...extra, error: `the gateway process exited with ${how}`, detail };
+  }
+  return {
+    ok: false,
+    message: `The gateway did not answer on ${cfg.baseUrl} within ${Math.round(START_TIMEOUT_MS / 1000)} s.`,
+    ...extra,
+    error: "the gateway did not come up",
+    detail,
+    log: cfg.serveLog,
+  };
+}
+
+// For tests only: forget everything cached about an install, so that a change
+// made behind this module's back (a downgrade, a new checkout) is seen at once.
+export function resetCaches() {
+  bustVersionCache();
+  gitCache = { at: 0, key: null, val: null };
+  pyCache = { at: 0, val: null };
+  cfgCacheAt = 0;
+}
+
+// Poll until the gateway answers, it exits, or the time is up. The timeout is
+// generous for slow machines because an early exit is noticed at once.
+async function awaitStart(state, timeoutMs = START_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (state.exited) return { up: false };
+    const h = await healthz();
+    if (h.up) return h;
+    if (Date.now() > deadline) return { up: false };
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+function fileEnd(path) {
+  try { return statSync(path).size; } catch { return 0; }
+}
+
+// The gateway's last words in serve.log since a given point, without the noise
+// of the health polls (about two lines per 5 s while a view or chip polls).
+async function serveLogTail(cfg, fromByte, maxLines = 12) {
+  try {
+    const size = statSync(cfg.serveLog).size;
+    const start = Math.max(fromByte, size - 64 * 1024);
+    const fh = await open(cfg.serveLog, "r");
+    try {
+      const buf = Buffer.alloc(size - start);
+      const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+      return buf.subarray(0, bytesRead).toString("utf8")
+        .split("\n").map((l) => l.replace(/\r$/, "").trimEnd())
+        .filter((l) => l && !l.includes("/healthz")).slice(-maxLines).join("\n");
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return "";
+  }
 }
 
 async function waitForHealth(up, timeoutMs) {
@@ -492,68 +786,106 @@ async function waitForHealth(up, timeoutMs) {
   return healthz();
 }
 
-// Fetch/reset the managed git tree to origin/<branch>, reinstall deps, restart
-// the service when it was running. The workhorse of "update like a manual install".
+// Update like a manual install would, for the install this plugin manages.
 export async function gatewayUpdate() {
   const cfg = await loadCfg();
   if (!existsSync(join(cfg.path, ".git"))) {
-    return { ok: false, error: "no git tree yet - run gateway_start first (it clones the repo)" };
+    return { ok: false, message: "Nothing to update yet.", error: "no git tree yet - run gateway_start first (it clones the repo)" };
   }
-  if (!(await gitBin())) {
-    return { ok: false, error: IS_WIN
-      ? "git not found - install Git for Windows (git-scm.com), then try again (restart ZCode if it persists)"
-      : "git not found - install git, then try again" };
-  }
-  const h = await healthz();
-  const wasUp = h.up;
-  const f = await gitAnon(["-C", cfg.path, "fetch", "origin", "--quiet"], 120_000);
-  if (!f.ok) return { ok: false, error: `git fetch failed: ${f.stderr.slice(0, 200)}` };
-  const behind = await runStep("git", ["-C", cfg.path, "rev-list", "--count", `HEAD..origin/${GIT_BRANCH}`], 10_000);
-  const n = behind.ok ? parseInt(behind.stdout.trim() || "0", 10) : 0;
-  gitCache = { at: 0, key: null, val: null };
-  if (n === 0) {
+  if (cfg.path !== cfg.installDir) {
+    // never write to an external checkout: say what to do instead
     const info = await gitInfo(cfg);
-    return { ok: true, updated: false, behind: 0, commit: info.commit, restarted: false, note: "already on latest origin/" + GIT_BRANCH };
+    return {
+      ok: false, managed: false, path: cfg.path, commit: info.commit, installedVersion: await installedGatewayVersion(cfg),
+      message: "This checkout is not managed by this plugin, so it was not changed.",
+      error: `update it yourself: git -C "${cfg.path}" pull && "${cfg.py}" -m pip install "${cfg.path}"`,
+    };
   }
-  const r = await gitAnon(["-C", cfg.path, "reset", "--hard", `origin/${GIT_BRANCH}`], 30_000);
-  if (!r.ok) return { ok: false, error: `git reset failed: ${r.stderr.slice(0, 200)}` };
-  await appendLog(cfg, `updated: ${n} commit(s), reset to origin/${GIT_BRANCH}`);
-  const pip = join(venvBin(cfg), IS_WIN ? "pip.exe" : "pip");
-  const p = await runStep(pip, ["install", "--quiet", "--disable-pip-version-check", cfg.path], 420_000);
-  if (!p.ok) return { ok: false, error: `pip install after update failed: ${p.stderr.slice(0, 200)}` };
+  const wasUp = (await healthz()).up;
+  const r = await updateTree(cfg);
+  if (!r.ok) return { ok: false, message: "Update failed.", error: r.error };
   let restarted = false;
-  if (wasUp) {
-    const st = await gatewayStop();
-    restarted = st.ok;
-    const st2 = await gatewayStart();
-    if (!st2.ok) return { ok: false, error: "updated but restart failed: " + (st2.error ?? st2.hint ?? "unknown"), behind: n };
+  if (r.updated && wasUp) {
+    await gatewayStop();
+    const again = await gatewayStart();
+    if (!again.ok) return { ok: false, message: "Updated, but the gateway did not restart.", error: again.error ?? "unknown", detail: again.detail, behind: r.behind };
+    restarted = true;
   }
-  const info = await gitInfo(cfg);
-  return { ok: true, updated: true, behind: n, commit: info.commit, restarted };
+  const gateway = await gatewayRequirement(cfg);
+  let message;
+  if (!r.updated) message = `Already on the latest version (commit ${r.commit}).`;
+  else if (!r.behind) message = `Reinstalled the gateway to match the checkout (commit ${r.commit}).`;
+  else message = `Updated: ${r.behind} commit${r.behind === 1 ? "" : "s"}, now at ${r.commit}${restarted ? "; the gateway was restarted" : ""}.`;
+  return { ok: true, updated: r.updated, behind: r.behind, commit: r.commit, restarted, gateway, message };
 }
 
+// The command line of a process, or null when there is none.
+async function processCommandLine(pid) {
+  if (IS_WIN) {
+    const r = await runStep("powershell", ["-NoProfile", "-NonInteractive", "-Command",
+      `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${Number(pid)}').CommandLine`], 20_000);
+    return r.ok && r.stdout.trim() ? r.stdout.trim() : null;
+  }
+  if (process.platform === "darwin") {
+    const r = await runStep("ps", ["-p", String(Number(pid)), "-o", "command="], 10_000);
+    return r.ok && r.stdout.trim() ? r.stdout.trim() : null;
+  }
+  try {
+    return readFileSync(`/proc/${Number(pid)}/cmdline`, "utf8").replaceAll("\0", " ") || null;
+  } catch {
+    return null;
+  }
+}
+
+// Is this the gateway this plugin started from this install? Its command line
+// must name the install dir and `serve`. A serve.pid left behind by a crash,
+// the idle exit or a reboot can point at any process, because numbers get reused.
+function isOurGateway(cmdline, cfg) {
+  const c = String(cmdline ?? "").toLowerCase();
+  return c.includes(String(cfg.path).toLowerCase()) && /\bserve\b/.test(c);
+}
+
+// Stop the gateway this plugin started, and nothing else. A serve.pid that
+// does not belong to a gateway from this install is removed, never signalled.
 export async function gatewayStop() {
   const cfg = await loadCfg();
-  // Preferred: kill exactly the child we spawned (pid file; works on Windows too).
+  const pidFile = join(cfg.runtimeDir, "serve.pid");
   let pid = null;
-  try { pid = parseInt(readFileSync(join(cfg.runtimeDir, "serve.pid"), "utf8").trim(), 10); } catch { pid = null; }
-  if (pid && Number.isFinite(pid)) {
-    try { process.kill(pid); } catch { /* already gone */ }
-    try { rmSync(join(cfg.runtimeDir, "serve.pid")); } catch { }
-    await waitForHealth(false, 8000);
-    const h = await healthz();
-    if (!h.up) return { ok: true, via: "pid", ...h };
+  try { pid = parseInt(readFileSync(pidFile, "utf8").trim(), 10); } catch { }
+  let ours = null;
+  if (Number.isInteger(pid) && pid > 0) {
+    if (isOurGateway(await processCommandLine(pid), cfg)) ours = pid;
+    else { try { rmSync(pidFile, { force: true }); } catch { } }
   }
-  if (IS_WIN) {
-    return { ok: false, error: "no plugin-spawned gateway (no pid file) - use gateway_start" };
-  }
-  // POSIX fallback for an instance not spawned by this plugin
-  await new Promise((resolve) => {
-    execFile("pkill", ["-f", `crispy-copilot serve --host ${cfg.host} --port ${cfg.port}`], { timeout: 5000 }, () => resolve());
-  });
-  await waitForHealth(false, 5000);
   const h = await healthz();
-  return { ok: !h.up, via: "pkill", ...h };
+  if (!h.up) {
+    return { ok: true, stopped: false, running: false, message: ours ? "The gateway is stopping or was not running." : "The gateway was not running.", ...h };
+  }
+  if (!ours) {
+    return {
+      ok: false, stopped: false, running: true, ...h,
+      message: `Something else is answering on port ${cfg.port}. This plugin only stops the gateway it started.`,
+      error: `a process this plugin did not start is answering on ${cfg.baseUrl}`,
+    };
+  }
+  try { process.kill(ours); } catch { /* gone already */ }
+  await waitForHealth(false, 10_000);
+  const after = await healthz();
+  if (after.up) {
+    return { ok: false, stopped: false, running: true, ...after, message: "The gateway did not stop.", error: "the gateway is still answering after being asked to stop" };
+  }
+  try { rmSync(pidFile, { force: true }); } catch { }
+  return { ok: true, stopped: true, running: false, ...after, message: "Gateway stopped." };
+}
+
+// After an idle exit, a crash or a reboot, serve.pid names a process that is
+// gone or that reused the number. Drop it so that nothing ever acts on it.
+async function dropStalePidFile(cfg) {
+  const pidFile = join(cfg.runtimeDir, "serve.pid");
+  let pid = null;
+  try { pid = parseInt(readFileSync(pidFile, "utf8").trim(), 10); } catch { return; }
+  if (isOurGateway(await processCommandLine(pid), cfg)) return;
+  try { rmSync(pidFile, { force: true }); } catch { }
 }
 import { openSync, closeSync, readFileSync, existsSync, rmSync, writeFileSync, mkdirSync, copyFileSync, statSync } from "node:fs";
 
@@ -647,6 +979,7 @@ export async function loginState(label) {
 export async function gatewayStatus() {
   const cfg = await loadCfg();
   const h = await healthz();
+  if (!h.up) await dropStalePidFile(cfg);
   const [conns, keys, usage, pending] = await Promise.all([
     connections(),
     keysMeta(),
@@ -668,6 +1001,7 @@ export async function gatewayStatus() {
     venvOk: existsSync(cfg.cli),
     idleExitMin: Number(process.env.CRISPY_GATEWAY_IDLE_EXIT ?? "30"),
     git: await gitInfo(cfg),
+    gateway: await gatewayRequirement(cfg),
     accounts: conns,
     activeLabel: conns.find((c) => c.active)?.label ?? null,
     keys,

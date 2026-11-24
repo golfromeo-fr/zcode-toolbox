@@ -43,6 +43,9 @@
         border-bottom: 1px solid rgba(127,127,127,0.35);
       }
       #use-out { margin: 0; padding: 4px 6px; font-size: 11px; white-space: pre-wrap; }
+      .svc { font-size: 12px; margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .svc.warn { color: #fbbf24; }
+      .svc.err { color: #f87171; }
       table { width: 100%; border-collapse: collapse; font-size: 11px; }
       th { text-align: left; opacity: 0.55; font-weight: 500; padding: 1px 6px 1px 0; }
       td { padding: 1px 6px 1px 0; white-space: nowrap; }
@@ -56,7 +59,10 @@
       <span class="spacer"></span>
       <span class="meta" id="updated"></span>
       <button id="btn-start" class="badge">start</button>
+      <button id="btn-update" class="badge">update…</button>
     </header>
+    <div id="gateway-note" class="svc warn" hidden></div>
+    <div id="service-msg" class="svc" hidden></div>
     <pre id="errors" style="display:none;color:#f87171;font-size:11px"></pre>
     <div id="empty" class="meta" hidden>Gateway not configured or unreachable.</div>
     <div id="cards" hidden>
@@ -85,8 +91,6 @@
         <button id="btn-config" class="badge">config…</button></div>
         <div class="row"><span class="grow meta">Create a new key (raw value shown once) + its config</span>
         <button id="btn-newkey" class="badge">new key…</button></div>
-        <div class="row"><span class="grow meta">Update the gateway git tree (fetch, reset, reinstall, restart)</span>
-        <button id="btn-update" class="badge">update…</button></div>
         <div id="use-wrap" hidden>
           <div class="usebar"><button id="btn-copy-config" class="badge">copy</button></div>
           <pre id="use-out"></pre>
@@ -126,13 +130,27 @@
         btn.hidden = false;
         btn.textContent = st.up ? "stop" : "start";
         btn.disabled = false;
+        // an installed gateway older than this extension is called out before
+        // anything is pressed, not only once start has failed
+        const g = st.gateway;
+        const note = $("gateway-note");
+        if (g?.outdated) {
+          note.hidden = false;
+          note.textContent = g.managed
+            ? `Gateway ${g.installed} is installed; this extension wants ${g.wantedVersion}. ${st.up ? "update… brings it to the latest." : "Start updates it first."}`
+            : `Gateway ${g.installed} is installed in a checkout this plugin does not change; this extension wants ${g.wantedVersion}. Update that checkout yourself.`;
+        } else {
+          note.hidden = true;
+        }
         if (!st.up) {
           $("empty").hidden = false;
           $("empty").textContent = !st.venvOk
             ? (st.git?.cloned
                 ? "Gateway cloned but not installed yet — press start."
                 : "Gateway not installed yet — press start (clones the gateway from GitHub, creates the venv, ~20s).")
-            : "Gateway installed but not responding — press start, or check serve.log in the plugin data dir.";
+            : g?.outdated && g.managed
+              ? `Gateway ${g.installed} is out of date (this extension wants ${g.wantedVersion}). Press start: it updates the gateway first, then starts.`
+              : "Gateway installed but not running — press start.";
         } else {
           $("empty").hidden = true;
         }
@@ -341,13 +359,31 @@
         flash($("btn-copy-config"), (await copyText($("use-out").textContent)) ? "copied" : "not copied — type it");
       });
 
+      // Start, stop and update report right under the buttons that caused them,
+      // in the gateway's own words when it refused something.
+      function showService(out, fallback) {
+        const box = $("service-msg");
+        const warn = !!(out?.omitted?.length || out?.notes?.length);
+        box.className = `svc ${!out?.ok ? "err" : warn ? "warn" : "ok"}`;
+        const lines = [out?.message ?? fallback ?? (out?.ok ? "Done." : "Failed.")];
+        for (const n of out?.notes ?? []) lines.push(n);
+        if (out?.hint) lines.push(out.hint);
+        if (out?.error && !lines.some((l) => String(l).includes(out.error))) lines.push(out.error);
+        if (out?.detail) lines.push(out.detail);
+        box.textContent = lines.filter(Boolean).join("\n");
+        box.hidden = false;
+      }
       $("btn-update").addEventListener("click", async () => {
+        const btn = $("btn-update");
+        btn.disabled = true;
+        btn.textContent = "updating…";
+        $("service-msg").className = "svc";
+        $("service-msg").textContent = "Updating the gateway…";
+        $("service-msg").hidden = false;
         const out = await callTool("update", {});
-        const box = $("use-out");
-        $("use-wrap").hidden = false;
-        box.textContent = out?.ok
-          ? (out.updated ? `updated ${out.behind} commit(s) → ${out.commit ?? "?"}${out.restarted ? " · restarted" : ""}` : `up to date (${out.commit ?? "?"})`)
-          : `failed: ${out?.error ?? "unknown"}`;
+        btn.disabled = false;
+        btn.textContent = "update…";
+        showService(out);
         await refresh();
       });
 
@@ -385,17 +421,19 @@
 
       $("btn-start").addEventListener("click", async () => {
         const btn = $("btn-start");
+        const before = await callTool("status", {});
+        const stopping = !!before?.up;
         btn.disabled = true;
-        btn.textContent = "working…";
-        const st0 = await callTool("status", {});
-        const out = st0?.up ? await callTool("stop", {}) : await callTool("start", {});
-        const box = $("use-out");
-        $("use-wrap").hidden = false;
-        box.textContent = out?.ok
-          ? (out.up
-              ? `gateway up (${out.latencyMs ?? "?"}ms)${out.installed ? " · freshly installed" : ""}`
-              : "gateway stopped")
-          : `failed: ${out?.error ?? out?.hint ?? "unknown"}`;
+        btn.textContent = stopping ? "stopping…" : "starting…";
+        const msg = $("service-msg");
+        msg.className = "svc";
+        msg.textContent = stopping
+          ? "Stopping the gateway…"
+          : `Starting the gateway…${before?.venvOk ? "" : " the first run clones and installs it, which takes a minute or so."}`;
+        msg.hidden = false;
+        const out = stopping ? await callTool("stop", {}) : await callTool("start", {});
+        btn.disabled = false;
+        showService(out, stopping ? "Gateway stopped." : "Gateway is up.");
         await refresh();
       });
 

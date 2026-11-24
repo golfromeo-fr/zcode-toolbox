@@ -19,7 +19,11 @@ export async function activate(ctx) {
 
   const chipFor = (st) => {
     if (!st || st.up === false) {
-      return { text: "gw down", tooltip: `copilot-gateway v${ctx.extension.version} · gateway not responding` };
+      // an outdated install is the one case where "down" has a cause worth naming
+      const why = st?.gateway?.outdated
+        ? `gateway ${st.gateway.installed} is out of date (this extension wants ${st.gateway.wantedVersion}); start updates it first`
+        : "gateway not running; press start";
+      return { text: `gw down${st?.gateway?.outdated ? " · outdated" : ""}`, tooltip: `copilot-gateway v${ctx.extension.version} · ${why}` };
     }
     const tt = st.usage?.totals ?? {};
     const credits = typeof tt.credits === "number" ? tt.credits.toFixed(1) : "?";
@@ -27,14 +31,15 @@ export async function activate(ctx) {
     const parts = [
       `copilot-gateway v${ctx.extension.version}`,
       st.baseUrl,
+      ...(st.gateway?.outdated ? [`gateway ${st.gateway.installed} is out of date (this extension wants ${st.gateway.wantedVersion}); start or update brings it up to date`] : []),
       st.accounts.length ? `acct ${st.accounts.map((a) => (a.active ? "★" : "") + a.label).join(",")}` : "no accounts",
       `keys ${st.keys.length}`,
       `credits ${credits} (${cost})`,
       `req ${tt.requests ?? "?"}`,
     ];
     return {
-      text: `gw ${st.latencyMs ?? "?"}ms`,
-      tooltip: parts.join(" · ").slice(0, 200),
+      text: `gw ${st.latencyMs ?? "?"}ms${st.gateway?.outdated ? " · outdated" : ""}`,
+      tooltip: parts.join(" · ").slice(0, 400),
     };
   };
 
@@ -81,12 +86,12 @@ export async function activate(ctx) {
       run: () => gatewayStatus(),
     },
     start: {
-      description: "Start the gateway (first run clones from GitHub + installs, ~20s)",
+      description: "Start the gateway. First run clones from GitHub and installs it. An installed gateway older than this extension is updated first (managed install) or started without the newer feature; the result says which",
       inputSchema: { type: "object", properties: {} },
       run: () => gatewayStart(),
     },
     stop: {
-      description: "Stop the gateway service",
+      description: "Stop the gateway this extension started, and nothing else; the result says when it was not running or something else is on the port",
       inputSchema: { type: "object", properties: {} },
       run: () => gatewayStop(),
     },
@@ -126,7 +131,7 @@ export async function activate(ctx) {
       run: (a) => gatewayUse(a?.keyName ? String(a.keyName) : "zcode"),
     },
     update: {
-      description: "Update the gateway git tree (fetch, reset to origin/main, pip install, restart if running)",
+      description: "Update the plugin-managed gateway to the latest on its main branch (fetch, reset, reinstall, restart if it was running); never changes an external checkout",
       inputSchema: { type: "object", properties: {} },
       run: () => gatewayUpdate(),
     },

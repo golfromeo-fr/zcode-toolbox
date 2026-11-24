@@ -16,14 +16,14 @@ Run the `gateway_status` MCP tool first. Interpretation guide:
 - `up: true` — everything already works; skip to step 4 (provider config) if the harness isn't wired yet.
 - `up: false` — use `gateway_start`.
 - down + `venvOk: false` — not installed yet: just call `gateway_start`. It clones the gateway from GitHub into the plugin data dir and installs it (venv + pip; needs git, python>=3.12, one-time network, ~20s) and then serves it.
-- down + venvOk true — just use `gateway_start` and re-check status.
+- down + venvOk true — use `gateway_start`. Since plugin 0.2.8 start itself checks that the installed gateway can do what this extension needs (the extension mandates the gateway version): on a plugin-managed install it updates the gateway first, then starts; offline it starts without the newer feature and the result says so. Always relay that result's `message`, `notes`, `error` and `detail`.
 - `accounts: []` — no GitHub account connected yet → device-flow login (step 2).
 
 ## 1b. Start/stop
 
 The gateway self-exits gracefully after 30 minutes without requests (default; `idle_exit` userConfig, 0 = keep running until stopped). While ZCode is open the chip's 5s health poll keeps it alive, so closing ZCode is effectively 'stop soon'.
 
-`gateway_start` is a no-op when already up (health-check first, never double-starts); the first run clones the gateway from GitHub and installs it (no separate checkout needed). `gateway_stop` stops the gateway this plugin started (pid file; POSIX fallback by exact host:port). The plugin-managed gateway uses its own store at `<runtime dir>/store` (`~/.zcode/plugin-data/copilot-gateway/store`) — isolated from any standalone gateway checkout, so a fresh machine starts with zero accounts and zero keys: do the device-flow login (step 2) once there.
+`gateway_start` is a no-op when already up (health-check first, never double-starts); the first run clones the gateway from GitHub and installs it (no separate checkout needed). `gateway_stop` stops the gateway this plugin started (pid file verified against the process command line; it refuses and reports when something else answers on the port). The plugin-managed gateway uses its own store at `<runtime dir>/store` (`~/.zcode/plugin-data/copilot-gateway/store`) — isolated from any standalone gateway checkout, so a fresh machine starts with zero accounts and zero keys: do the device-flow login (step 2) once there.
 
 ## 2. Connect a GitHub account (device flow)
 

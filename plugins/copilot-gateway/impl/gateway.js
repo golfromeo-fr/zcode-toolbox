@@ -613,7 +613,7 @@ export async function gatewayLogin(label) {
     // only the address GitHub sent with the code: never a guessed default
     if (state.url) state.openedInBrowser = await openInBrowser(state.url);
   }
-  return { ok: true, ...state };
+  return { ok: true, platform: process.platform, ...state };
 }
 
 export async function loginState(label) {
@@ -662,6 +662,7 @@ export async function gatewayStatus() {
     dataDir: cfg.dataDir,
     installDir: cfg.installDir,
     repo: GIT_REPO,
+    platform: process.platform,
     pythonOk: (await findPython(cfg)).ok,
     installing: installPromise != null,
     venvOk: existsSync(cfg.cli),

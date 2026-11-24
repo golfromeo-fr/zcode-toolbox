@@ -112,7 +112,7 @@ const refresh = async (st) => {
 };
 const base = (over = {}) => ({
   up: false, latencyMs: null, baseUrl: "http://127.0.0.1:8812", venvOk: false, git: { cloned: false },
-  accounts: [], keys: [], pendingLogins: [], usage: { totals: null, recent: [] }, ...over,
+  accounts: [], keys: [], pendingLogins: [], usage: { totals: null, recent: [] }, platform: "linux", ...over,
 });
 const pending = (phase, extra = {}) => [{ phase, label: "work", url: "https://github.com/login/device", ...extra }];
 let passed = 0;
@@ -157,7 +157,7 @@ await check("start button follows the current state", async () => {
   assert.match(el("use-out").textContent, /gateway stopped/);
 });
 
-const login = (extra = {}) => ({ ok: true, phase: "awaiting-authorization", label: "work", code: "ABCD-1234", url: "https://github.com/login/device", ...extra });
+const login = (extra = {}) => ({ ok: true, phase: "awaiting-authorization", label: "work", code: "ABCD-1234", url: "https://github.com/login/device", platform: "linux", ...extra });
 
 await check("login: address and code shown as text when no browser opened", async () => {
   tools.login = () => login({ openedInBrowser: false });
@@ -168,7 +168,9 @@ await check("login: address and code shown as text when no browser opened", asyn
   assert.equal(el("login-link").textContent, "https://github.com/login/device");
   assert.equal(el("login-link").href, "https://github.com/login/device");
   assert.equal(el("login-code").value, "ABCD-1234");
-  assert.match(el("login-msg").textContent, /No browser could be opened from here\. Type the link above/);
+  assert.match(el("login-msg").textContent, /No browser could be opened from here\. Run the command below in a terminal/);
+  assert.equal(el("login-cmd-wrap").hidden, false);
+  assert.equal(el("login-cmd").textContent, "xdg-open https://github.com/login/device");
   assert.equal(el("btn-login").textContent, "login…");
   assert.equal(el("btn-login").disabled, false);
 });
@@ -178,6 +180,7 @@ await check("login: message when a browser did open", async () => {
   await click("btn-login");
   // an opener can exit cleanly without anything appearing: the link stays the fallback
   assert.match(el("login-msg").textContent, /asked to open on this machine\. If none appeared, click the link above/);
+  assert.equal(el("login-cmd-wrap").hidden, true, "no terminal command once a browser was asked to open");
   assert.equal(el("login-code").value, "WXYZ-5678");
 });
 
@@ -207,6 +210,16 @@ await check("login: without the app call the link is left as a plain link", asyn
     assert.deepEqual(calls.slice(n), []);
   } finally {
     bridge.openExternal = open;
+  }
+});
+
+await check("login: the terminal command follows the machine", async () => {
+  for (const [platform, command] of [["win32", "start"], ["darwin", "open"], ["freebsd", null]]) {
+    tools.login = () => login({ openedInBrowser: false, platform });
+    await click("btn-login");
+    assert.equal(el("login-cmd").textContent, command ? `${command} https://github.com/login/device` : "", platform);
+    assert.equal(el("login-cmd-wrap").hidden, !command, platform);
+    if (!command) assert.match(el("login-msg").textContent, /Type the link above/);
   }
 });
 

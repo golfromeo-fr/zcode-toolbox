@@ -29,6 +29,10 @@
         flex: 1; min-width: 0; overflow-wrap: anywhere; color: inherit;
         font-family: ui-monospace, Menlo, Consolas, monospace;
       }
+      #login-cmd {
+        font-family: ui-monospace, Menlo, Consolas, monospace; user-select: all; cursor: text;
+        overflow-wrap: anywhere;
+      }
       #use-wrap {
         max-height: 45vh; overflow: auto; margin-top: 4px;
         border: 1px solid rgba(127,127,127,0.35); border-radius: 4px;
@@ -66,6 +70,7 @@
           <div class="row"><span class="meta">code</span><input id="login-code" class="sel" readonly />
           <button id="btn-copy-code" class="badge">copy</button></div>
           <div class="meta" id="login-msg"></div>
+          <div class="meta" id="login-cmd-wrap" hidden>Terminal on this machine: <code id="login-cmd"></code></div>
         </div>
       </div>
       <div class="card" id="card-accounts"><h2>Accounts</h2><div id="accounts"></div></div>
@@ -137,6 +142,7 @@
         renderUsage(st);
         // keep the login block in step with the refresh: a pending code stays
         // visible, a finished or dead attempt says so
+        if (st.platform) hostPlatform = st.platform;
         const logins = Array.isArray(st.pendingLogins) ? st.pendingLogins : [];
         const mine = logins.find((p) => p.label === loginFlow?.label) ?? logins[0];
         if (mine) showLogin(mine, loginFlow?.openedInBrowser);
@@ -271,10 +277,14 @@
       // shown as plain text to type by hand; copy is only a convenience.
       let loginFlow = null; // { label, openedInBrowser } of the attempt on display
       let loginUrl = ""; // the link GitHub sent with the code on display
+      let hostPlatform = null; // the machine the gateway runs on, from the status payload
+      const OPENER = { linux: "xdg-open", darwin: "open", win32: "start" }; // opens a URL from a terminal
       const LOGIN_MSG = {
         "awaiting-authorization": () => loginFlow?.openedInBrowser === true
           ? "A browser page was asked to open on this machine. If none appeared, click the link above, or type it in any browser (this machine, your phone, another computer — anywhere you are signed in to GitHub), then enter the code."
-          : "No browser could be opened from here. Type the link above in any browser (this machine, your phone, another computer — anywhere you are signed in to GitHub), then enter the code.",
+          : $("login-cmd-wrap").hidden
+            ? "No browser could be opened from here. Type the link above in any browser (this machine, your phone, another computer — anywhere you are signed in to GitHub), then enter the code."
+            : "No browser could be opened from here. Run the command below in a terminal on this machine (it opens the page when a browser is installed), or type the link above in any browser (this machine, your phone, another computer — anywhere you are signed in to GitHub), then enter the code.",
         starting: "Waiting for GitHub to issue a code… If this persists, this machine may not be able to reach github.com.",
         failed: "Login failed — press login… to try again.",
         expired: "The code expired — press login… for a new one.",
@@ -285,6 +295,7 @@
           label: p.label ?? loginFlow?.label ?? null,
           openedInBrowser: openedInBrowser ?? loginFlow?.openedInBrowser,
         };
+        if (p.platform) hostPlatform = p.platform;
         $("login-flow").hidden = false;
         // only the link GitHub sent with this code: never a guessed default
         loginUrl = p.url || "";
@@ -292,6 +303,11 @@
         a.textContent = loginUrl || "(no link came back with this code)";
         if (loginUrl) a.setAttribute("href", loginUrl); else a.removeAttribute("href");
         $("login-code").value = p.phase === "awaiting-authorization" ? (p.code ?? "") : "";
+        // the terminal way in: only where no browser opened and the machine has a command for it
+        const opener = OPENER[hostPlatform];
+        const showCmd = p.phase === "awaiting-authorization" && !!loginUrl && loginFlow.openedInBrowser !== true && !!opener;
+        $("login-cmd-wrap").hidden = !showCmd;
+        $("login-cmd").textContent = showCmd ? `${opener} ${loginUrl}` : "";
         const msg = LOGIN_MSG[p.phase];
         const text = typeof msg === "function" ? msg() : (msg ?? "");
         const noAddress = p.phase === "awaiting-authorization" && !p.url

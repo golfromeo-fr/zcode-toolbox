@@ -338,6 +338,24 @@ await check("pending list: click the code to copy it", async () => {
   assert.equal(codeEl.textContent, "copied");
 });
 
+await check("pending list: dismiss removes the attempt and clears the card", async () => {
+  tools.login = () => login({ openedInBrowser: false });
+  await click("btn-login"); // the card shows this attempt
+  assert.equal(el("login-flow").hidden, false);
+  await refresh(base({ pendingLogins: pending("awaiting-authorization", { code: "ABCD-1234" }) }));
+  assert.match(el("logins").innerHTML, /data-dismiss="work"/);
+  let dismissed = null;
+  tools.loginDismiss = (a) => { dismissed = a.label; return { ok: true, removed: true }; };
+  status = base({}); // once dismissed, the attempt is gone from status
+  const n = calls.length;
+  await documentClick("button[data-dismiss]", { dataset: { dismiss: "work" } });
+  assert.deepEqual(calls.slice(n).map((c) => c[0]), ["loginDismiss", "status"]); // dismiss, then its refresh
+  assert.equal(dismissed, "work");
+  assert.equal(el("login-flow").hidden, true, "the dismissed attempt must leave the card");
+  assert.equal(el("logins").innerHTML, "", "the dismissed row is gone");
+  assert.equal(el("card-logins").hidden, true);
+});
+
 await check("refresh reports an expired code instead of offering it", async () => {
   await refresh(base({ pendingLogins: pending("expired", { code: "ABCD-1234" }) }));
   assert.equal(el("login-code").value, "");

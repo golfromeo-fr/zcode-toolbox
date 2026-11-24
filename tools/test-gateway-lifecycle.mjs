@@ -362,6 +362,56 @@ await scenario("a lock left behind by a dead process does not block a start", { 
   assert.equal(existsSync(join(root, "start.lock")), false);
 });
 
+await scenario("login dismiss: stops a verifiable poller and removes the record", { CRISPY_GATEWAY_REPO: (r) => join(r, "remote.git") }, async ({ root, mod }) => {
+  const install = join(root, "gateway");
+  await oldInstall(root, { current: true, installed: "0.1.1" });
+  // a stand-in poller whose command line names the install dir, login and the label
+  const poller = spawn(process.execPath, ["-e", `const install = ${JSON.stringify(install)}; // gateway login work\nsetInterval(() => {}, 1e6);`], { stdio: "ignore" });
+  await sleep(300);
+  writeFileSync(join(root, "login-work.log"), "One-time code: GONE-CODE\nOpen https://github.com/login/device and enter the code to authorize.\n");
+  writeFileSync(join(root, "login-work.pid"), String(poller.pid));
+  assert.ok((await mod.listPendingLogins()).some((p) => p.label === "work"));
+  const r = await mod.loginDismiss("work");
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.stopped, true, "the verifiable poller was not stopped");
+  assert.equal(r.removed, true);
+  await sleep(200);
+  assert.ok(poller.exitCode !== null || poller.signalCode !== null, "the poller kept running");
+  assert.equal((await mod.listPendingLogins()).some((p) => p.label === "work"), false);
+  assert.equal(existsSync(join(root, "login-work.log")), false);
+  const again = await mod.loginDismiss("work");
+  assert.equal(again.ok, true);
+  assert.equal(again.removed, false);
+  assert.match(again.message, /No login attempt named 'work'/);
+});
+
+await scenario("login dismiss: a stale pid file is cleaned without signalling anyone", { CRISPY_GATEWAY_REPO: (r) => join(r, "remote.git") }, async ({ root, mod }) => {
+  await oldInstall(root, { current: true, installed: "0.1.1" });
+  const dead = spawn("true", [], { stdio: "ignore" });
+  await new Promise((r) => dead.once("exit", r));
+  writeFileSync(join(root, "login-work.log"), "One-time code: OLD-CODE\nOpen https://github.com/login/device and enter the code to authorize.\n");
+  writeFileSync(join(root, "login-work.pid"), String(dead.pid));
+  const r = await mod.loginDismiss("work");
+  assert.equal(r.ok, true);
+  assert.equal(r.stopped, false, "a dead pid must not be signalled");
+  assert.equal(r.removed, true);
+  assert.equal(existsSync(join(root, "login-work.pid")), false);
+});
+
+await scenario("login dismiss: a pid that belongs to someone else is not signalled", { CRISPY_GATEWAY_REPO: (r) => join(r, "remote.git") }, async ({ root, mod }) => {
+  await oldInstall(root, { current: true, installed: "0.1.1" });
+  const bystander = spawn("sleep", ["300"], { stdio: "ignore" });
+  await sleep(300);
+  writeFileSync(join(root, "login-work.log"), "One-time code: X-CODE\nOpen https://github.com/login/device and enter the code to authorize.\n");
+  writeFileSync(join(root, "login-work.pid"), String(bystander.pid));
+  const r = await mod.loginDismiss("work");
+  assert.equal(r.ok, true);
+  assert.equal(r.stopped, false, "an unrelated process was signalled");
+  assert.equal(bystander.exitCode, null, "the bystander was killed");
+  bystander.kill();
+  await new Promise((r) => bystander.once("exit", r));
+});
+
 if (REAL) {
   console.log("lifecycle tests (real, network)");
   await scenario("real upgrade path: a clone from before --idle-exit is healed by start", {}, async ({ root, port, mod }) => {

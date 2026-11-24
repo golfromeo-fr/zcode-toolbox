@@ -4,7 +4,7 @@
 // gateway.js). A service has no session events, so chip scope comes from
 // ctx.workbench.visibleSessions() each tick.
 import {
-  gatewayStatus, gatewayStart, gatewayStop, gatewayUpdate, gatewayLogin, loginState,
+  gatewayStatus, gatewayStart, gatewayStop, gatewayUpdate, gatewayLogin, loginState, loginDismiss,
   keysMeta, keyCreate, keyRevoke, keySetPin, gatewayUse, gatewayConfig,
 } from "./gateway.js";
 
@@ -104,6 +104,11 @@ export async function activate(ctx) {
       description: "Check a pending login: awaiting-authorization / connected / failed",
       inputSchema: { type: "object", properties: { label: { type: "string" } }, required: ["label"] },
       run: (a) => loginState(String(a?.label ?? "")),
+    },
+    loginDismiss: {
+      description: "Remove a login attempt: stops its poller when verifiably ours and deletes its record, so a dead attempt cannot sit in Pending logins forever",
+      inputSchema: { type: "object", properties: { label: { type: "string" } }, required: ["label"] },
+      run: (a) => loginDismiss(String(a?.label ?? "")),
     },
     keyCreate: {
       description: "Create a proxy key; raw value returned once",

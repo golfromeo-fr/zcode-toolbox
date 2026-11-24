@@ -923,12 +923,29 @@ export async function openInBrowser(url) {
   });
 }
 
+// The pid of the login poller for a label, but only when the recorded process
+// still is ours (command line names this install, `login` and the label).
+// A pid file left behind by a finished, failed or reused process is ignored.
+async function loginPollerPid(cfg, safe) {
+  let pid = null;
+  try { pid = parseInt(readFileSync(join(DATA_DIR, `login-${safe}.pid`), "utf8").trim(), 10); } catch { return null; }
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  const cmd = await processCommandLine(pid);
+  if (!cmd) return null;
+  const lc = cmd.toLowerCase();
+  const ours = lc.includes(String(cfg.path).toLowerCase()) && /\blogin\b/.test(lc) && lc.includes(safe.toLowerCase());
+  return ours ? pid : null;
+}
+
 export async function gatewayLogin(label) {
   if (!label || typeof label !== "string") return { ok: false, error: "label required" };
   const cfg = await loadCfg();
   const inst = await ensureInstall(cfg);
   if (!inst.ok) return { ok: false, error: inst.error };
   const safe = label.replace(/[^\w.-]/g, "_").slice(0, 40) || "account";
+  // a retry must not stack a second poller next to the previous attempt's
+  const prev = await loginPollerPid(cfg, safe);
+  if (prev) { try { process.kill(prev); } catch { } }
   const logPath = join(DATA_DIR, `login-${safe}.log`);
   const fd = openSync(logPath, "w");
   const child = spawn(cfg.cli, ["login", safe], {
@@ -939,6 +956,7 @@ export async function gatewayLogin(label) {
   });
   child.unref();
   try { closeSync(fd); } catch { }
+  try { await writeFile(join(DATA_DIR, `login-${safe}.pid`), String(child.pid ?? ""), { mode: 0o600 }); } catch { }
   await new Promise((r) => setTimeout(r, 3000));
   const state = await loginState(safe);
   if (state.code) {
@@ -976,6 +994,27 @@ export async function loginState(label) {
   if (ageMs > 20_000) return { phase: "failed", label: safe, logTail: log.slice(-300) };
   return { phase: "starting", label: safe };
 }
+// Remove a login attempt: stop its poller (only when the pid is verifiably
+// ours) and delete its record, so a dead attempt cannot sit in Pending logins
+// forever. Harmless when there is nothing to remove.
+export async function loginDismiss(label) {
+  if (!label || typeof label !== "string") return { ok: false, error: "label required" };
+  const cfg = await loadCfg();
+  const safe = label.replace(/[^\w.-]/g, "_").slice(0, 40) || "account";
+  const logPath = join(DATA_DIR, `login-${safe}.log`);
+  const pidPath = join(DATA_DIR, `login-${safe}.pid`);
+  const pid = await loginPollerPid(cfg, safe);
+  let stopped = false;
+  if (pid) { try { process.kill(pid); stopped = true; } catch { /* gone already */ } }
+  const existed = existsSync(logPath) || existsSync(pidPath);
+  try { rmSync(logPath, { force: true }); } catch { }
+  try { rmSync(pidPath, { force: true }); } catch { }
+  return {
+    ok: true, label: safe, stopped, removed: existed,
+    message: !existed && !stopped ? `No login attempt named '${safe}'.` : stopped ? `Login '${safe}' removed and its poller stopped.` : `Login '${safe}' removed.`,
+  };
+}
+
 export async function gatewayStatus() {
   const cfg = await loadCfg();
   const h = await healthz();

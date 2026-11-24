@@ -190,7 +190,8 @@
             : `<span class="meta">${esc(ROW_TEXT[p.phase] ?? p.phase)}</span>`;
           const link = p.phase === "awaiting-authorization" && p.url
             ? `<a class="badge openlink" href="${esc(p.url)}" data-url="${esc(p.url)}">${esc(p.url)}</a>` : "";
-          return `<div class="row"><span class="grow">${esc(p.label)}</span>${right}${link}</div>`;
+          const dismiss = `<button class="badge" data-dismiss="${esc(p.label)}">dismiss</button>`;
+          return `<div class="row"><span class="grow">${esc(p.label)}</span>${right}${link}${dismiss}</div>`;
         }).join("");
       }
       function renderKeys(st) {
@@ -454,6 +455,14 @@
         if (!btn) return;
         if (!confirm(`Revoke key '${btn.dataset.revoke}'? Harnesses using it stop working immediately.`)) return;
         await callTool("keyRevoke", { name: btn.dataset.revoke });
+        await refresh();
+      });
+      document.addEventListener("click", async (e) => {
+        const btn = e.target.closest("button[data-dismiss]");
+        if (!btn) return;
+        const label = btn.dataset.dismiss;
+        await callTool("loginDismiss", { label });
+        if (loginFlow?.label === label) { loginFlow = null; $("login-flow").hidden = true; }
         await refresh();
       });
 

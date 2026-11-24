@@ -3,7 +3,7 @@
 // control plane as MCP tools over stdio (zero-dep, line-delimited JSON-RPC
 // 2.0). Launched from the plugin manifest's mcpServers entry.
 import { gatewayStatus, gatewayStart, gatewayStop, gatewayUpdate, gatewayLogin, loginState,
-         keysMeta, keyCreate, keyRevoke, keySetPin, gatewayUse, gatewayConfig, usageData,
+         keysMeta, keyCreate, keyRevoke, keySetPin, gatewayUse, gatewayConfig, loginDismiss, usageData,
          connections, listPendingLogins } from "./gateway.js";
 
 const VERSION = "0.1.0";
@@ -128,6 +128,11 @@ const TOOLS = {
     description: "Status of a device-flow login: awaiting-authorization (code + URL), connected, failed.",
     inputSchema: obj({ label: s("Connection label to check") }, ["label"]),
     run: (a) => loginState(String(a.label ?? "")),
+  },
+  gateway_login_dismiss: {
+    description: "Remove a login attempt: stops its poller when verifiably ours and deletes its record, so a dead attempt cannot sit in Pending logins forever. Harmless when there is nothing to remove.",
+    inputSchema: obj({ label: s("Connection label to remove") }, ["label"]),
+    run: (a) => loginDismiss(String(a.label ?? "")),
   },
   gateway_keys: {
     description: "List proxy keys (name, created, last_used, account pin). Metadata only — raw keys are never recoverable.",
